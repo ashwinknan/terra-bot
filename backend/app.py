@@ -20,7 +20,7 @@ from langchain.text_splitter import CharacterTextSplitter
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app,origins=["https://rag-game-assistant-frontend.onrender.com"])
 
 # Initialize OpenAI API
 openai_api_key = os.getenv("OPENAI_API_KEY")
