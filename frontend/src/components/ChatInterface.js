@@ -12,12 +12,17 @@ const ChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const messagesEndRef = useRef(null);
-
+  
+  // Simplified scrollToBottom function
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
-  useEffect(scrollToBottom, [conversation]);
+  useEffect(() => {
+    scrollToBottom();
+  }, [conversation]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
