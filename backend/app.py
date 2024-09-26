@@ -40,7 +40,7 @@ def load_documents():
     return documents
 
 documents = load_documents()
-text_splitter = CharacterTextSplitter(chunk_size=1600, chunk_overlap=400)
+text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=250)
 texts = text_splitter.split_documents(documents)
 
 # Create vector store
