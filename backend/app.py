@@ -15,6 +15,16 @@ CORS(app)
 vector_store = None
 qa_chain = None
 
+def initialize_app(force_recreate=False):
+    global vector_store, qa_chain
+    vector_store = get_or_create_vector_store(force_recreate=force_recreate)
+    qa_chain = create_qa_chain(vector_store)
+    print("Application initialized successfully.")
+
+@app.before_first_request
+def before_first_request():
+    initialize_app()
+
 @app.route('/ask', methods=['POST', 'OPTIONS'])
 def ask_question():
     if request.method == 'OPTIONS':
@@ -25,6 +35,12 @@ def ask_question():
     logger.info(f"Received question: {question}")
     
     try:
+        logger.info(f"qa_chain type: {type(qa_chain)}")
+        logger.info(f"vector_store type: {type(vector_store)}")
+        
+        if qa_chain is None:
+            raise ValueError("qa_chain is not initialized")
+        
         # Use the QA chain to get the answer
         result = qa_chain({"question": question})
         
@@ -44,11 +60,6 @@ def handle_options_request():
     response.headers.add('Access-Control-Allow-Methods', 'POST')
     return response
 
-def initialize_app(force_recreate=False):
-    global vector_store, qa_chain
-    vector_store = get_or_create_vector_store(force_recreate=force_recreate)
-    qa_chain = create_qa_chain(vector_store)
-    print("Application initialized successfully.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run the QA system')
