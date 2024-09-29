@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import './ChatInterface.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
+//const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://rag-game-assistant-backend.onrender.com';
 
 const ChatInterface = () => {
   const [input, setInput] = useState('');
