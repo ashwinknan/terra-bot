@@ -1,85 +1,59 @@
-import os
+import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.document_loaders import PyPDFLoader, TextLoader
-from langchain.text_splitter import CharacterTextSplitter
-from dotenv import load_dotenv
+import argparse
+from src.vector_store import get_or_create_vector_store
+from src.qa_chain import create_qa_chain
 
-load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-if app.debug:
-    # Development environment
-    CORS(app, resources={r"/ask": {"origins": "http://localhost:3000"}})
-else:
-    # Production environment
-    allowed_origin = os.environ.get('ALLOWED_ORIGIN', 'https://rag-game-assistant-frontend.onrender.com')
-    CORS(app, resources={r"/ask": {"origins": allowed_origin}})
+CORS(app)
 
-# Initialize OpenAI API
-openai_api_key = os.getenv("OPENAI_API_KEY")
-llm = ChatOpenAI(model_name="gpt-4", temperature=0, openai_api_key=openai_api_key)
+# Initialize vector store and QA chain
+vector_store = None
+qa_chain = None
 
-# Load and process documents
-def load_documents():
-    documents = []
-    for filename in os.listdir('knowledge_base'):
-        filepath = os.path.join('knowledge_base', filename)
-        if filename.endswith('.pdf'):
-            loader = PyPDFLoader(filepath)
-        elif filename.endswith('.md'):
-            loader = TextLoader(filepath)
-        else:
-            continue
-        documents.extend(loader.load())
-    return documents
-
-documents = load_documents()
-text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=250)
-texts = text_splitter.split_documents(documents)
-
-# Create vector store
-embeddings = OpenAIEmbeddings()
-db = Chroma.from_documents(texts, embeddings)
-
-# Create conversation chain
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-qa = ConversationalRetrievalChain.from_llm(llm, db.as_retriever(), memory=memory)
-
-@app.route('/ask', methods=['POST'])
+@app.route('/ask', methods=['POST', 'OPTIONS'])
 def ask_question():
+    if request.method == 'OPTIONS':
+        return handle_options_request()
+    
     data = request.json
-    question = data['question']
-    result = qa({"question": question})
-    return jsonify({"answer": result['answer']})
+    question = data.get('question', '')
+    logger.info(f"Received question: {question}")
+    
+    try:
+        # Use the QA chain to get the answer
+        result = qa_chain({"question": question})
+        
+        answer = result['answer']
+        sources = [doc.metadata.get('source', 'Unknown') for doc in result.get('source_documents', [])]
+        logger.info(f"Generated answer: {answer}")
+        logger.info(f"Sources: {sources}")
+        
+        return jsonify({"answer": answer, "sources": sources})
+    except Exception as e:
+        logger.error(f"Error processing question: {str(e)}", exc_info=True)
+        return jsonify({"error": "An error occurred while processing your question."}), 500
 
+def handle_options_request():
+    response = jsonify({'message': 'OK'})
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'POST')
+    return response
 
-#@app.route('/rate', methods=['POST'])
-#def rate_response():
-    #data = request.json
-    #rating = data['rating']
-    # Here you would typically store the rating in a database
-    #return jsonify({"status": "Rating received"})
-
-#@app.route('/update-index', methods=['POST'])
-#def update_index():
-    #if request.headers.get('X-Api-Key') != os.getenv('UPDATE_INDEX_API_KEY'):
-        #return jsonify({"error": "Unauthorized"}), 401
-       
-    #try:
-        #global documents, texts, db, qa
-        #documents = load_documents()
-        #texts = text_splitter.split_documents(documents)
-        #db = Chroma.from_documents(texts, embeddings)
-        #qa = ConversationalRetrievalChain.from_llm(llm, db.as_retriever(), memory=memory)
-        #return jsonify({"status": "Index updated successfully"})
-    #except Exception as e:
-        #return jsonify({"error": str(e)}), 500
+def initialize_app(force_recreate=False):
+    global vector_store, qa_chain
+    vector_store = get_or_create_vector_store(force_recreate=force_recreate)
+    qa_chain = create_qa_chain(vector_store)
+    print("Application initialized successfully.")
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    parser = argparse.ArgumentParser(description='Run the QA system')
+    parser.add_argument('--recreate-vector-store', action='store_true', help='Force recreation of the vector store')
+    args = parser.parse_args()
+
+    initialize_app(force_recreate=args.recreate_vector_store)
+    app.run(debug=True, host='0.0.0.0', port=5001)
