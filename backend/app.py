@@ -19,11 +19,10 @@ def initialize_app(force_recreate=False):
     global vector_store, qa_chain
     vector_store = get_or_create_vector_store(force_recreate=force_recreate)
     qa_chain = create_qa_chain(vector_store)
-    print("Application initialized successfully.")
+    logger.info("Application initialized successfully.")
 
-@app.before_first_request
-def before_first_request():
-    initialize_app()
+# Call initialize_app right after creating the Flask app instance
+initialize_app()
 
 @app.route('/ask', methods=['POST', 'OPTIONS'])
 def ask_question():
@@ -59,7 +58,6 @@ def handle_options_request():
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
     response.headers.add('Access-Control-Allow-Methods', 'POST')
     return response
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run the QA system')
