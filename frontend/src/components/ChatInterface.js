@@ -38,11 +38,23 @@ const ChatInterface = () => {
 
   const formatMessage = (content) => {
     const codeBlockRegex = /```[\s\S]*?```/g;
+    const bulletPointRegex = /^\s*[-*]\s(.+)$/gm;
+    const numberedListRegex = /^\s*(\d+\.)\s(.+)$/gm;
+
     const parts = content.split(codeBlockRegex);
     const codeBlocks = content.match(codeBlockRegex) || [];
     
     return parts.reduce((acc, part, index) => {
-      acc.push(<span key={`text-${index}`}>{part}</span>);
+      // Format bullet points
+      part = part.replace(bulletPointRegex, '<li>$1</li>');
+      part = part.replace(/<li>/g, '<ul><li>').replace(/<\/li>\s*(?!<li>)/g, '</li></ul>');
+      
+      // Format numbered lists
+      part = part.replace(numberedListRegex, '<li>$2</li>');
+      part = part.replace(/<li>/g, '<ol><li>').replace(/<\/li>\s*(?!<li>)/g, '</li></ol>');
+
+      acc.push(<span key={`text-${index}`} dangerouslySetInnerHTML={{ __html: part }} />);
+      
       if (codeBlocks[index]) {
         const code = codeBlocks[index].replace(/```/g, '').trim();
         acc.push(<pre key={`code-${index}`}><code>{code}</code></pre>);
