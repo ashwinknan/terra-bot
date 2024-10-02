@@ -33,7 +33,7 @@ def create_qa_chain(vector_store):
     - Provide complete, functional code snippets when possible.
     - Include comments to explain the code's functionality.
 
-    Here are two examples of ideal responses:
+    Here is an example of an ideal response:
 
     Example 1:
     Q: How can I kill a player when he clicks on a stone object in the screen?
@@ -51,50 +51,6 @@ def create_qa_chain(vector_store):
     5. `Lerp time` - Specify the number of seconds for lerping (only if "lerp" is selected for `Respawn Type`)
 
     This pre-built logic efficiently handles the player death and respawn mechanics without requiring custom code.
-
-    Example 2:
-    Q: How do I make the skybox for my scene rotate on every frame, creating a dynamic background effect in T#? Help me generate a script for the same
-    A: Certainly! Here's a T# script that rotates the skybox every frame, creating a dynamic background effect:
-
-    ```csharp
-    // SkyboxRotator: Rotates the SkyBox per frame
-    using System;
-    using System.Collections;
-    using Terra.Studio;
-    using Terra.Studio.Exposed;
-    using Terra.Studio.Exposed.Layers;
-    using UnityEngine;
-
-    public class SkyboxRotator : StudioBehaviour
-    {
-        private float m_fRotationSpeed = 1.5f;
-        private float m_fRotationValue;
-
-        // Gets called every frame
-        private void Update()
-        {
-            // Increment rotation value based on time
-            m_fRotationValue += m_fRotationSpeed * Time.deltaTime;
-            
-            // Apply rotation to the skybox
-            RenderSettings.skybox.SetFloat("_Rotation", m_fRotationValue);
-        }
-    }
-    ```
-
-    This script does the following:
-    1. Defines a `SkyboxRotator` class that inherits from `StudioBehaviour`.
-    2. Sets a rotation speed of 1.5 units per second.
-    3. In the `Update()` method, which is called every frame:
-    - Increments the rotation value based on the time elapsed since the last frame.
-    - Applies the new rotation value to the skybox using `RenderSettings.skybox.SetFloat()`.
-
-    To use this script:
-    1. Create a new script in your Terra Studio project and name it "SkyboxRotator".
-    2. Copy and paste the above code into the script.
-    3. Attach the script to any game object in your scene.
-
-    The skybox will now rotate continuously, creating a dynamic background effect.
 
     Context: {context}
     Question: {question}
