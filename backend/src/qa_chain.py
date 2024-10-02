@@ -13,7 +13,7 @@ def create_qa_chain(vector_store):
         output_key="answer"
     )
     
-    # Define a custom prompt template
+    # Define the new custom prompt template
     template = """
     You are an AI assistant specialized in Terra Studio, a game development engine that uses T#, an interpreter for the popular game programming language Unity C# as its scripting language. 
     Answer questions based on the provided context but with your expert understanding of the commonalities and similarities between Unity C# and T# . Do not use external knowledge or make assumptions.
@@ -99,7 +99,6 @@ def create_qa_chain(vector_store):
     Context: {context}
     Question: {question}
     Response: [Provide your response here, following the guidelines and examples above]
-
     """
     
     QA_CHAIN_PROMPT = PromptTemplate(
