@@ -5,7 +5,7 @@ from langchain.prompts import PromptTemplate
 from config import OPENAI_API_KEY
 
 def create_qa_chain(vector_store):
-    llm = ChatOpenAI(model_name="gpt-4", temperature=0, openai_api_key=OPENAI_API_KEY)
+    llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
     
     memory = ConversationBufferMemory(
         memory_key="chat_history",
