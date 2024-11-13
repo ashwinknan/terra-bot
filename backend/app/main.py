@@ -1,6 +1,7 @@
 # app/main.py
 import logging
 import argparse
+import os
 from flask import Flask
 from flask_cors import CORS
 from app.api.routes import api_bp
@@ -26,8 +27,11 @@ def create_app(force_recreate=False):
     logger.info("Creating Flask application...")
     app = Flask(__name__)
     
-    # Configure CORS
-    CORS(app, origins=[ALLOWED_ORIGIN])
+    # Configure CORS with more specific settings
+    CORS(app, 
+         origins=[ALLOWED_ORIGIN],
+         allow_headers=["Content-Type"],
+         methods=["GET", "POST", "OPTIONS"])
     
     # Register blueprints
     app.register_blueprint(api_bp, url_prefix='/api')
@@ -46,8 +50,12 @@ def main():
     args = parser.parse_args()
 
     app = create_app(force_recreate=args.recreate_vector_store)
-    logger.info("Starting Flask server...")
-    app.run(debug=DEBUG, host='0.0.0.0', port=5001)
+    
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 5001))
+    
+    logger.info(f"Starting Flask server on port {port}...")
+    app.run(debug=DEBUG, host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
