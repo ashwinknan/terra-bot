@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './ChatInterface.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://rag-game-assistant-backend.onrender.com';
+//const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://rag-game-assistant-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
 
 const ChatInterface = () => {
   const [input, setInput] = useState('');
@@ -10,9 +11,18 @@ const ChatInterface = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Add logging for backend URL
   useEffect(() => {
-    console.log('Backend URL:', BACKEND_URL);
+    // Test backend connection on component mount
+    const testBackendConnection = async () => {
+      try {
+        await axios.post(`${BACKEND_URL}/api/ask`, { question: 'test' });
+        console.log('Backend connection successful');
+      } catch (err) {
+        console.log('Backend connection test:', err.message);
+        setError('Unable to connect to backend server. Please check if it\'s running.');
+      }
+    };
+    testBackendConnection();
   }, []);
 
   const handleSubmit = async (e) => {
@@ -30,18 +40,16 @@ const ChatInterface = () => {
     setConversation(prev => [...prev, newQuestion]);
     
     try {
-      console.log('Sending request to:', `${BACKEND_URL}/ask`);
-      console.log('Request payload:', { question: input });
+      console.log('Sending request to:', `${BACKEND_URL}/api/ask`);
       
       const result = await axios.post(
-        `${BACKEND_URL}/ask`, 
+        `${BACKEND_URL}/api/ask`, 
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
+            'Content-Type': 'application/json'
           },
-          timeout: 30000 // 30 second timeout
+          timeout: 30000
         }
       );
       
@@ -64,7 +72,6 @@ const ChatInterface = () => {
                           'An error occurred while connecting to the server';
       setError(errorMessage);
       
-      // Add error message to conversation
       const errorResponse = {
         type: 'answer',
         content: `Error: ${errorMessage}`,
