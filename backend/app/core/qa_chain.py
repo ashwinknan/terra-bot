@@ -100,14 +100,13 @@ class QAChainManager:
             current_history = []
             for i in range(0, len(self.chat_memory.messages), 2):
                 if i + 1 < len(self.chat_memory.messages):
-                    # Add pairs of messages (human and ai)
                     current_history.extend([
                         self.chat_memory.messages[i],
                         self.chat_memory.messages[i + 1]
                     ])
 
-            # Process the query
-            result = chain({
+            # Process the query using invoke instead of __call__
+            result = chain.invoke({
                 "question": query,
                 "chat_history": current_history
             })

@@ -1,11 +1,17 @@
 services:
   - type: web
-    name: rag-game-assistant  # Change this to match your Render service name
+    name: your-service-name
     env: python
     buildCommand: |
       cd backend
       pip install -r requirements.txt
-    startCommand: cd backend && gunicorn "app.main:create_app()"
+    startCommand: >
+      cd backend && gunicorn "app.main:create_app()" 
+      --timeout 120 
+      --workers 2 
+      --threads 4 
+      --worker-class gthread
+      --log-level info
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
@@ -13,6 +19,8 @@ services:
         value: 10000
       - key: FLASK_DEBUG
         value: false
+      - key: GUNICORN_TIMEOUT
+        value: 120
     healthCheckPath: /
     autoDeploy: true
     disk:
