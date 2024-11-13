@@ -78,7 +78,6 @@ This document describes the code for a RAG chatbot and how the files are organiz
     │   └── __Init__.py
     ├── .DS_Store
     ├── .env
-    ├── Codebase_Summary.md
     ├── requirements.txt
     ├── run.py
     ├── runtime.txt
