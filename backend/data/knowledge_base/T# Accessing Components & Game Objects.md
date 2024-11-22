@@ -1,4 +1,6 @@
 # Accessing Components and GameObjects
+## Type
+Functions
 
 # Accessing Components and Objects in T#
 

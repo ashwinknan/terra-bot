@@ -1,14 +1,14 @@
 import logging
-from app.config.settings import ANTHROPIC_API_KEY
+from app.config.settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 from langchain_anthropic import ChatAnthropic
 
 logger = logging.getLogger(__name__)
 
-def test_llm():
+def check_llm_connection():
     """Test the LLM connection and basic functionality"""
     try:
         llm = ChatAnthropic(
-            model_name="claude-3-sonnet-20240229",
+            model_name=CLAUDE_MODEL,
             anthropic_api_key=ANTHROPIC_API_KEY,
             temperature=0
         )

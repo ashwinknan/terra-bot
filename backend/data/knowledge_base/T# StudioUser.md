@@ -1,5 +1,5 @@
 # StudioUser
-# Type
+## Type
 Functions
 
 Studio User is a class that can be used to access user information for players playing your game made on Terra Studio on the Terra Client app

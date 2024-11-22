@@ -1,4 +1,4 @@
-# app/core/initializer.py
+# File: backend/app/core/initializer.py
 
 import logging
 from pathlib import Path
@@ -10,10 +10,11 @@ from app.core.qa_chain import QAChainManager
 from app.config.settings import (
     CHUNK_SIZE,
     CHUNK_OVERLAP,
-    MAX_RETRIES,  # Add this to settings.py with default value 3
-    RETRY_DELAY,  # Add this to settings.py with default value 1.0
-    MIN_CHUNK_SIZE,  # Add this to settings.py with default value 100
-    MAX_CHUNK_SIZE   # Add this to settings.py with default value 3000
+    MAX_RETRIES,
+    RETRY_DELAY,
+    MIN_CHUNK_SIZE,
+    MAX_CHUNK_SIZE,
+    CACHE_DIR
 )
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,8 @@ class AppComponents:
     qa_chain_manager = None
     qa_chain = None
 
-def _retry_with_backoff(func: Callable[[], Any], max_retries: int = 3, initial_delay: float = 1) -> Any:
-    """
-    Helper function to retry operations with exponential backoff
-    """
+def _retry_with_backoff(func: Callable[[], Any], max_retries: int = MAX_RETRIES, initial_delay: float = RETRY_DELAY) -> Any:
+    """Helper function to retry operations with exponential backoff"""
     for attempt in range(max_retries):
         try:
             return func()
@@ -42,9 +41,7 @@ def _retry_with_backoff(func: Callable[[], Any], max_retries: int = 3, initial_d
             time.sleep(delay)
 
 def initialize_app(force_recreate=False):
-    """
-    Initialize all application components with improved error handling and retries
-    """
+    """Initialize all application components"""
     try:
         logger.info("Starting application initialization...")
         
@@ -55,7 +52,7 @@ def initialize_app(force_recreate=False):
         # Ensure directory exists
         knowledge_base_path.mkdir(exist_ok=True, parents=True)
         
-        # Initialize document processor with enhanced configuration
+        # Initialize document processor with settings from config
         logger.info("Initializing document processor...")
         AppComponents.doc_processor = DocumentProcessor(
             knowledge_base_path=str(knowledge_base_path),
@@ -65,7 +62,7 @@ def initialize_app(force_recreate=False):
             max_chunk_size=MAX_CHUNK_SIZE
         )
         
-        # Load documents with enhanced error handling
+        # Load documents
         logger.info("Loading documents...")
         documents = AppComponents.doc_processor.load_documents()
         stats = AppComponents.doc_processor.get_processing_stats()
@@ -106,9 +103,7 @@ def initialize_app(force_recreate=False):
         raise RuntimeError(f"Failed to start server: {str(e)}")
 
 def shutdown_app():
-    """
-    Safely shutdown all application components
-    """
+    """Safely shutdown all application components"""
     logger.info("Shutting down application...")
     try:
         if AppComponents.vector_store_manager:

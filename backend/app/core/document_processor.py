@@ -223,18 +223,22 @@ class DocumentProcessor:
 
     def _validate_chunk(self, document: Document) -> bool:
         """Validate a document chunk"""
-        content_length = len(document.page_content)
-        
-        if content_length < self.min_chunk_size:
-            raise ValueError(f"Chunk too small ({content_length} chars)")
+        try:
+            content_length = len(document.page_content)
             
-        if content_length > self.max_chunk_size:
-            raise ValueError(f"Chunk too large ({content_length} chars)")
-            
-        if not document.page_content.strip():
-            raise ValueError("Empty chunk")
-            
-        return True
+            if not document.page_content.strip():
+                raise ValueError("Empty chunk")
+                
+            if content_length < int(self.min_chunk_size):
+                raise ValueError(f"Chunk too small ({content_length} chars)")
+                
+            if content_length > int(self.max_chunk_size):
+                raise ValueError(f"Chunk too large ({content_length} chars)")
+                
+            return True
+        except Exception as e:
+            logger.error(f"Chunk validation error: {str(e)}")
+            return False
 
     def _log_processing_summary(self, failed_files: List[Tuple[str, List[str]]]):
         """Log detailed processing summary"""

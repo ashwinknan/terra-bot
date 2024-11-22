@@ -1,142 +1,132 @@
-# app/config/prompt_templates.py
+from langchain.prompts import PromptTemplate
 
-from langchain.prompts import (
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    ChatPromptTemplate,
-    MessagesPlaceholder
-)
+BASE_TEMPLATE = """Use the following pieces of context to answer the question at the end.
 
-# System messages for different components
-SYSTEM_MESSAGES = {
-    "qa": """You are a T# programming expert assistant. Your role is to:
-1. Help developers write correct T# code by analyzing similar examples
-2. Explain Terra Studio concepts clearly with reference to documentation
-3. Highlight differences between T# and Unity C#
-4. Provide practical, working examples based on patterns
+Context:
+{context}
 
-When responding to code generation requests:
-- Analyze provided example game mechanics for relevant patterns
-- Apply T# programming rules from the documentation
-- Combine patterns to create new solutions
-- Include detailed comments explaining the implementation
-- Focus on T#-specific features and best practices
+Question: {question}
 
-Use the context below to:
-1. First identify relevant example implementations
-2. Extract key patterns and approaches
-3. Apply T# rules and conventions
-4. Generate new code that combines these elements
+Instructions:
+1. Use only the information from the context above
+2. If the information isn't in the context, say so
+3. Provide specific examples when possible
+4. Reference the relevant documentation sections
 
-If you can't find specific examples or rules in the context, 
-be honest about it and provide general T# guidance.""",
-    
-    "summarization": """You are a technical documentation analyzer for T# programming language.
-Your task is to create clear, structured summaries that:
-1. Identify core concepts and functionality
-2. Highlight key differences from Unity C#
-3. Extract important code patterns and examples
-4. Note common usage scenarios and best practices""",
-    
-    "error_handling": """You are a T# debugging assistant. Your role is to:
-1. Identify common T# programming errors
-2. Explain why errors occur in T# context
-3. Provide correct solutions with examples
-4. Suggest best practices to avoid similar issues"""
-}
+Answer in markdown format:"""
 
-# QA Chain Prompts
-qa_messages = [
-    SystemMessagePromptTemplate.from_template(SYSTEM_MESSAGES["qa"]),
-    MessagesPlaceholder(variable_name="chat_history"),
-    HumanMessagePromptTemplate.from_template(
-        "Available Context:\n{context}\n\n"
-        "Question: {question}\n\n"
-        "Please provide a detailed answer that references relevant examples and documentation:"
-    )
-]
+CODE_TEMPLATE = """You are a T# programming expert. Generate code by following these strict steps:
 
-QA_PROMPT = ChatPromptTemplate.from_messages(qa_messages)
+1. RULESET VERIFICATION (find in Ruleset-type documents):
+   - Required base classes (e.g., StudioBehavior)
+   - Syntax rules and limitations
+   - Available event functions
+   - General constraints
 
-# Summarization Chain Prompts
-summarization_messages = [
-    SystemMessagePromptTemplate.from_template(SYSTEM_MESSAGES["summarization"]),
-    HumanMessagePromptTemplate.from_template("""Please analyze this T# documentation:
-{text}
+2. FUNCTION SEARCH (in this exact order):
+   a) Search Functions-type documents for:
+      - EXACT function signatures
+      - Parameter types and return values
+      - Usage syntax
+      - Required namespaces
+   
+   b) Search Example-type documents for:
+      - Implementation patterns of these functions
+      - Context in which functions are used
+      - Proper function chaining or sequences
 
-Create a structured summary that includes:
-1. Core Functionality:
-   - Main purpose
-   - Key features
-   - Usage scenarios
+   c) If function not found in either:
+      - Note absence of documented function
+      - Consider alternative T# approaches
+      - Only then consider Unity/C# alternatives
 
-2. T# Specifics:
-   - Differences from Unity C#
-   - Unique Terra Studio features
-   - Implementation details
+3. IMPLEMENTATION VERIFICATION:
+   For EACH function or syntax element you plan to use:
+   a) Find exact signature in Functions documentation
+   b) Find exact usage example in Example documentation
+   c) If not found in either, mark as "NEEDS VERIFICATION"
 
-3. Code Patterns:
-   - Common usage examples
-   - Best practices
-   - Typical patterns
+Context:
+{context}
 
-4. Integration Points:
-   - How it fits with other T# components
-   - Common integration patterns
-   - Compatibility considerations
+Question: {question}
 
-Summary:""")
-]
+Generate your response in this order:
+1. SYNTAX REQUIREMENTS:
+   - List exact T# syntax rules found
+   - Quote relevant documentation sections
+   - Identify required base classes
 
-SUMMARY_PROMPT = ChatPromptTemplate.from_messages(summarization_messages)
+2. FUNCTION IDENTIFICATION:
+   For each function needed:
+   - Quote exact signature from Functions docs
+   - Quote example usage from Example docs
+   - List any functions not found in either
 
-# Error Handling Chain Prompts
-error_handling_messages = [
-    SystemMessagePromptTemplate.from_template(SYSTEM_MESSAGES["error_handling"]),
-    HumanMessagePromptTemplate.from_template("""Error Context:
-{error_context}
+3. CODE GENERATION:
+   Write code with inline documentation for EACH line:
+   ```csharp
+   // Source: [document name] - [exact quote]
+   line of code;
+   
+   // WARNING: No direct documentation found - based on [reasoning]
+   undocumented line of code;
+   ```
 
-Error Message: {error_message}
+4. VERIFICATION CHECKLIST:
+   - List each function used with documentation source
+   - Flag any undocumented usage
+   - Suggest areas needing verification
 
-Please provide:
-1. Error explanation in T# context
-2. Potential causes
-3. Solution with code example
-4. Prevention tips
+Remember:
+1. NEVER guess at syntax - use exact matches from documentation
+2. If you can't find exact syntax in Functions or Examples, mark it clearly
+3. Quote relevant documentation for each implementation choice
+4. Each function must have either:
+   - Direct reference to Functions documentation, or
+   - Example usage from Example documentation, or
+   - Clear warning about lack of documentation"""
 
-Response:""")
-]
+ERROR_TEMPLATE = """You are debugging T# code. For each line of code:
 
-ERROR_HANDLING_PROMPT = ChatPromptTemplate.from_messages(error_handling_messages)
+1. Find exact syntax rules in Ruleset-type documents
+2. Match function usage against Functions-type documents
+3. Compare implementation with Example-type documents
 
-# Retrieval Prompts
-RETRIEVAL_PROMPT = """Given these documents about T# programming:
-{documents}
+Context:
+{context}
 
-Please find information relevant to:
-{query}
+Question: {question}
 
-Focus on:
-1. Exact matches to the query
-2. Related T# concepts
-3. Relevant code examples
-4. Implementation details"""
+Format your answer with:
+1. LINE BY LINE ANALYSIS:
+   - Quote relevant documentation for each line
+   - Flag any syntax without documentation
+   - Note discrepancies from documented patterns
 
-# You can add more specialized prompts as needed
-VALIDATION_PROMPT = """Validate this T# code snippet:
-{code}
+2. ISSUES FOUND:
+   - Undocumented function usage
+   - Syntax pattern mismatches
+   - Ruleset violations
 
-Check for:
-1. T# syntax correctness
-2. Terra Studio compatibility
-3. Best practice adherence
-4. Potential issues"""
+3. CORRECTIONS:
+   - Quote correct syntax from documentation
+   - Show example usage from documentation
+   - Explain any necessary changes
 
-# Export all prompts as a dictionary for easy access
+4. VERIFICATION STEPS"""
+
 PROMPT_TEMPLATES = {
-    "qa": QA_PROMPT,
-    "summary": SUMMARY_PROMPT,
-    "error": ERROR_HANDLING_PROMPT,
-    "retrieval": RETRIEVAL_PROMPT,
-    "validation": VALIDATION_PROMPT
+    "qa": PromptTemplate(
+        template=BASE_TEMPLATE,
+        input_variables=["context", "question"]
+    ),
+    "code": PromptTemplate(
+        template=CODE_TEMPLATE,
+        input_variables=["context", "question"]
+    ),
+    "error": PromptTemplate(
+        template=ERROR_TEMPLATE,
+        input_variables=["context", "question"]
+    )
 }

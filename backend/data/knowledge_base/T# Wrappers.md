@@ -4,7 +4,7 @@ description: >-
   template
 ---
 
-# Type
+## Type
 Functions
 
 # T# Logic Component Template Wrappers

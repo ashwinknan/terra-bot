@@ -1,6 +1,6 @@
 # StudioExtensions
 
-# Type
+## Type
 Functions
 
 ### **StudioExtensions**

@@ -1,5 +1,8 @@
 # Audio
 
+## Type
+Functions
+
 ## **SFX**
 
 To infuse your game with more life and interactivity, sound effects (SFX) play a crucial role. Here's how to seamlessly integrate them into your game.

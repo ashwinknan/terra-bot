@@ -1,6 +1,6 @@
 # T# limitations
-## Type 
-Limitations
+## Type
+Ruleset
 
 ### **Unsupported Functionalities in T#**This page lists everything that is currently not supported in T#
 

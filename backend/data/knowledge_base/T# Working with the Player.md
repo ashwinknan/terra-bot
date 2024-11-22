@@ -1,5 +1,5 @@
 # Working with the player
-# Type
+## Type
 Ruleset
 
 # **Configuring the Player**

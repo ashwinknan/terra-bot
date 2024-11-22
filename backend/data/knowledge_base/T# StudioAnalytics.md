@@ -1,6 +1,6 @@
 # StudioAnalytics
 
-# Type
+## Type
 Functions
 
 ### **Studio Analytics**

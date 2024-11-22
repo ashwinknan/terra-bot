@@ -1,6 +1,7 @@
 # Haptics
 
-# **T# Haptics & Extensions**
+## Type
+Functions
 
 ### **StudioHaptics**
 

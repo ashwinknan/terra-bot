@@ -1,6 +1,6 @@
 # Particles
 
-# Type
+## Type
 Functions
 
 Particles allow you to add moving elements such as fire, beams, aurora lights etc within the game environment.

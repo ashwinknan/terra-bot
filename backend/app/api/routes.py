@@ -60,19 +60,22 @@ def ask_question():
         
         result = AppComponents.qa_chain_manager.process_query(AppComponents.qa_chain, question)
         
+        # Add logging for debugging
+        logger.info(f"QA Chain result: {result}")
+        
         response = {
-            "answer": result["answer"],
+            "answer": result.get("answer", "No answer generated"),
             "sources": [doc.metadata.get('source', 'Unknown') for doc in result.get('source_documents', [])],
         }
         
-        logger.info(f"Generated answer successfully for question: {question}")
+        logger.info(f"Generated answer: {response['answer']}")
         return jsonify(response)
         
     except Exception as e:
         logger.error(f"Error processing question: {str(e)}", exc_info=True)
         return jsonify({
-            "error": "An error occurred while processing your question.",
-            "details": str(e) if isinstance(e, ValueError) else None
+            "error": str(e),
+            "answer": "An error occurred while processing your question.",
         }), 500
 
 @api_bp.route('/ask', methods=['OPTIONS'])

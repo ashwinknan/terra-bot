@@ -1,5 +1,5 @@
 # Variables
-# Type
+## Type
 Ruleset
 
 When you create a script in the Editor, Terra Studio automatically provides a template script for you to edit, which inherits from the `StudioBehaviour` class. Inheriting from the `StudioBehavior` class means your script can behave like a type of component, and you can attach it to GameObjects like any other component.

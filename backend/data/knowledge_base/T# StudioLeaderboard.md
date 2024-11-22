@@ -1,6 +1,6 @@
 # StudioLeaderboard
 
-# Type
+## Type
 Functions
 
 StudioLeaderboard class can you help you implement Terra’s leaderboard mechanic on the Terra Client app

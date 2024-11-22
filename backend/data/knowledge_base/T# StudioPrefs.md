@@ -1,6 +1,6 @@
 # StudioPrefs
 
-# Type
+## Type
 Functions
 
 Studio Prefs class helps you save and retrieve any persistent data you may wish to store in your game, such as Player Level

@@ -1,4 +1,5 @@
-# app/main.py
+# File: backend/app/main.py
+
 import logging
 import argparse
 import os
@@ -7,7 +8,7 @@ from flask_cors import CORS
 from app.api.routes import api_bp
 from app.core.initializer import initialize_app
 from app.utils.version_check import check_versions
-from app.utils.llm_test import test_llm
+from app.utils.llm_health_check import check_llm_connection
 from app.config.settings import DEBUG, ALLOWED_ORIGIN
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,15 +20,15 @@ def create_app(force_recreate=False):
     if not check_versions():
         logger.warning("Version mismatches detected. Application may not work as expected.")
 
-    # Test LLM
-    if not test_llm():
-        logger.error("LLM test failed - check your configuration")
-        raise RuntimeError("LLM test failed")
+    # Verify LLM connection before starting
+    if not check_llm_connection():
+        logger.error("LLM connection check failed - check your configuration")
+        raise RuntimeError("LLM connection check failed")
     
     logger.info("Creating Flask application...")
     app = Flask(__name__)
     
-    # Configure CORS with more specific settings
+    # Configure CORS with settings from config
     CORS(app, 
          origins=[ALLOWED_ORIGIN],
          allow_headers=["Content-Type"],

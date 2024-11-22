@@ -1,6 +1,6 @@
 # Loading Scenes
 
-# Type
+## Type
 Functions
 
 ### **Load Scene**

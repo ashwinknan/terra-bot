@@ -1,25 +1,23 @@
+# app/core/qa_chain.py
+
 import logging
 from typing import Any, Dict, List
-
 from langchain_anthropic import ChatAnthropic
-from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_community.vectorstores import Chroma
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
 from app.config.settings import (
     ANTHROPIC_API_KEY,
     CLAUDE_MODEL,
     VECTOR_STORE_TOP_K,
     LLM_TEMPERATURE,
-    LLM_MAX_TOKENS,
-    RETRIEVAL_MODE,
-    MMR_DIVERSITY_SCORE
+    LLM_MAX_TOKENS
 )
-from app.config.prompt_templates import SYSTEM_MESSAGES
+from app.config.prompt_templates import PROMPT_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -33,112 +31,149 @@ class QAChainManager:
             max_tokens=LLM_MAX_TOKENS
         )
         
-        # Initialize empty chat history
-        self.chat_memory = ChatMessageHistory()
+        # Initialize memory
+        self.memory = ConversationBufferMemory(
+            return_messages=True,
+            memory_key="history",
+            output_key="answer"
+        )
+        
+        self.output_parser = StrOutputParser()
+        self.qa_chain = None
+        self.code_chain = None
+        self.error_chain = None
+        self.retriever = None
 
-    def create_qa_chain(self, vector_store: Chroma) -> ConversationalRetrievalChain:
+    def create_qa_chain(self, vector_store: Chroma) -> Any:
         """Create a conversational retrieval chain"""
         try:
             logger.info("Creating QA chain...")
             
-            # Configure retriever
-            search_kwargs = {"k": VECTOR_STORE_TOP_K}
-            if RETRIEVAL_MODE == "mmr":
-                search_kwargs["fetch_k"] = VECTOR_STORE_TOP_K * 2
-                search_kwargs["lambda_mult"] = MMR_DIVERSITY_SCORE
-            
-            retriever = vector_store.as_retriever(
-                search_type=RETRIEVAL_MODE,
-                search_kwargs=search_kwargs
+            # Set up retriever with simpler configuration
+            self.retriever = vector_store.as_retriever(
+                search_kwargs={"k": VECTOR_STORE_TOP_K}
             )
 
-            # Create the memory
-            memory = ConversationBufferMemory(
-                memory_key="chat_history",
-                output_key="answer",
-                return_messages=True
+            # Define the base retrieval and formatting chain
+            def format_docs(docs):
+                # Extract source documents for later use
+                self.last_sources = docs
+                # Convert docs to strings and join them
+                texts = [str(doc.page_content) for doc in docs]
+                return "\n\n".join(texts)
+
+            # Create the chain with proper formatting
+            def get_context(inputs):
+                question = inputs["question"]
+                # Ensure question is a string
+                if not isinstance(question, str):
+                    question = str(question)
+                # Get relevant documents
+                docs = self.retriever.get_relevant_documents(question)
+                # Format documents
+                return {"context": format_docs(docs), "question": question}
+
+            # Create specialized chains
+            self.qa_chain = (
+                RunnablePassthrough.assign(context=get_context) 
+                | PROMPT_TEMPLATES["qa"] 
+                | self.llm 
+                | self.output_parser
             )
 
-            # Create the QA prompt
-            qa_prompt = ChatPromptTemplate.from_messages([
-                ("system", SYSTEM_MESSAGES["qa"]),
-                ("human", "Using the following context, answer the question. Context: {context}\n\nQuestion: {question}")
-            ])
-
-            # Create the conversational chain
-            qa_chain = ConversationalRetrievalChain.from_llm(
-                llm=self.llm,
-                retriever=retriever,
-                memory=memory,
-                get_chat_history=lambda h: h,  # Just return the history as is
-                verbose=True,
-                return_source_documents=True
+            self.code_chain = (
+                RunnablePassthrough.assign(context=get_context)
+                | PROMPT_TEMPLATES["code"] 
+                | self.llm 
+                | self.output_parser
             )
 
-            logger.info(f"QA chain created successfully with {RETRIEVAL_MODE} retrieval")
-            return qa_chain
+            self.error_chain = (
+                RunnablePassthrough.assign(context=get_context)
+                | PROMPT_TEMPLATES["error"] 
+                | self.llm 
+                | self.output_parser
+            )
+
+            logger.info("QA chain created successfully with custom prompts")
+            return self.qa_chain
 
         except Exception as e:
             logger.error(f"Error creating QA chain: {str(e)}")
-            logger.error("Exception details:", exc_info=True)
             raise
 
-    def process_query(self, chain: ConversationalRetrievalChain, query: str) -> Dict[str, Any]:
-        """Process a query using the QA chain"""
+    def determine_query_type(self, query: str) -> str:
+        """Determine the type of query to select appropriate chain"""
+        query_lower = query.lower()
+        
+        if any(word in query_lower for word in ['error', 'bug', 'fix', 'issue', 'debug', 'null']):
+            return 'error'
+        
+        if any(word in query_lower for word in ['create', 'generate', 'write', 'code', 'implement']):
+            return 'code'
+        
+        return 'qa'
+
+    def process_query(self, chain: Any, query: str) -> Dict[str, Any]:
+        """Process a query using appropriate chain"""
         try:
             if not query or not isinstance(query, str) or not query.strip():
                 return {
                     "answer": "Please provide a valid question.",
-                    "source_documents": [],
+                    "sources": [],
                     "chat_history": []
                 }
 
-            # Add the user's question to chat history
-            self.chat_memory.add_user_message(query)
-            
-            # Get current chat history as a list of messages
-            current_history = []
-            for i in range(0, len(self.chat_memory.messages), 2):
-                if i + 1 < len(self.chat_memory.messages):
-                    current_history.extend([
-                        self.chat_memory.messages[i],
-                        self.chat_memory.messages[i + 1]
-                    ])
+            # Clean and normalize query
+            query = " ".join(query.strip().split())
 
-            # Process the query using invoke instead of __call__
-            result = chain.invoke({
-                "question": query,
-                "chat_history": current_history
-            })
+            # Store initial sources
+            self.last_sources = []
 
-            # Extract answer and sources
-            answer = result.get("answer", "")
-            sources = result.get("source_documents", [])
+            # Determine query type and select chain
+            query_type = self.determine_query_type(query)
+            selected_chain = getattr(self, f"{query_type}_chain", chain)
 
-            # Add the assistant's response to chat history
-            if answer:
-                self.chat_memory.add_ai_message(answer)
+            try:
+                # Process query with the selected chain
+                answer = selected_chain.invoke({"question": query})
+                
+                # Store interaction in memory
+                if isinstance(answer, str):
+                    self.memory.chat_memory.add_user_message(query)
+                    self.memory.chat_memory.add_ai_message(answer)
 
-            return {
-                "answer": answer or "An error occurred while processing your question.",
-                "source_documents": sources,
-                "chat_history": self.chat_memory.messages
-            }
+                # Get sources from the retriever's last call
+                sources = []
+                if hasattr(self, 'last_sources') and self.last_sources:
+                    sources = [doc.metadata.get('source', 'Unknown') for doc in self.last_sources]
+
+                return {
+                    "answer": answer,
+                    "sources": sources,
+                    "chat_history": self.memory.chat_memory.messages
+                }
+
+            except Exception as chain_error:
+                logger.error(f"Chain invocation error: {str(chain_error)}")
+                return {
+                    "answer": f"Error processing query: {str(chain_error)}",
+                    "sources": [],
+                    "chat_history": self.memory.chat_memory.messages
+                }
 
         except Exception as e:
-            logger.error(f"Error in process_query: {str(e)}")
-            logger.error("Full exception details:", exc_info=True)
-            self.clear_memory()
+            logger.error(f"Error in process_query: {str(e)}", exc_info=True)
             return {
-                "answer": f"An error occurred while processing your question: {str(e)}",
-                "source_documents": [],
-                "chat_history": []
+                "answer": f"Error processing query: {str(e)}",
+                "sources": [],
+                "chat_history": self.memory.chat_memory.messages
             }
 
     def get_chat_history(self) -> List[BaseMessage]:
         """Get properly formatted chat history"""
         try:
-            return self.chat_memory.messages
+            return self.memory.chat_memory.messages
         except Exception as e:
             logger.error(f"Error getting chat history: {str(e)}")
             return []
@@ -146,7 +181,7 @@ class QAChainManager:
     def clear_memory(self) -> None:
         """Clear conversation memory"""
         try:
-            self.chat_memory.clear()
+            self.memory.clear()
             logger.info("Conversation memory cleared successfully")
         except Exception as e:
             logger.error(f"Error clearing memory: {str(e)}")
