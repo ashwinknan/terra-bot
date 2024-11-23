@@ -73,7 +73,13 @@ CACHE_DIR = os.getenv('CACHE_DIR', '.cache')
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 RETRY_DELAY = float(os.getenv('RETRY_DELAY', '1.0'))
 MIN_CHUNK_SIZE = int(os.getenv('MIN_CHUNK_SIZE', '100'))
-MAX_CHUNK_SIZE = int(os.getenv('MAX_CHUNK_SIZE', '4000'))
+MAX_CHUNK_SIZE = int(os.getenv('MAX_CHUNK_SIZE', '8000'))
+
+# Special settings for code chunks
+CODE_CHUNK_SIZE = int(os.getenv('CODE_CHUNK_SIZE', '11800'))  # Reduced from 12000 to allow for markers
+CODE_CHUNK_OVERLAP = int(os.getenv('CODE_CHUNK_OVERLAP', '400'))
+MIN_CODE_CHUNK_SIZE = int(os.getenv('MIN_CODE_CHUNK_SIZE', '50'))
+MAX_CODE_CHUNK_SIZE = int(os.getenv('MAX_CODE_CHUNK_SIZE', '11800'))  # Reduced to match CODE_CHUNK_SIZE
 
 def validate_settings() -> Dict[str, Any]:
     """Validate all settings and return current configuration"""

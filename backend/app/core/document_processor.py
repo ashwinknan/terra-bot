@@ -9,7 +9,18 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from langchain_core.documents import Document
 from app.utils.text_splitter import CustomMarkdownSplitter
-from app.config.settings import CHUNK_SIZE, CHUNK_OVERLAP
+from app.config.settings import (
+    CHUNK_SIZE, 
+    CHUNK_OVERLAP,
+    MAX_RETRIES,
+    RETRY_DELAY,
+    MIN_CHUNK_SIZE,
+    MAX_CHUNK_SIZE,
+    CODE_CHUNK_SIZE,
+    CODE_CHUNK_OVERLAP,
+    MIN_CODE_CHUNK_SIZE,
+    MAX_CODE_CHUNK_SIZE
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +30,6 @@ class ProcessingError(Exception):
 
 class DocType(Enum):
     RULESET = "ruleset"
-    LIMITATIONS = "limitations"
     FUNCTIONS = "functions"
     EXAMPLE = "example"
     
@@ -41,28 +51,35 @@ class ProcessingResult:
 
 class DocumentProcessor:
     def __init__(self, knowledge_base_path: str, 
-                 max_retries: int = 3,
-                 retry_delay: float = 1.0,
-                 min_chunk_size: int = 100,
-                 max_chunk_size: int = 3000):
+                 max_retries: int = MAX_RETRIES,
+                 retry_delay: float = RETRY_DELAY,
+                 min_chunk_size: int = MIN_CHUNK_SIZE,
+                 max_chunk_size: int = MAX_CHUNK_SIZE):
         """Initialize document processor with configuration"""
         self.knowledge_base_path = Path(knowledge_base_path)
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
-        self.processing_stats = {
-            "total_files": 0,
-            "successful_files": 0,
-            "failed_files": 0,
-            "total_chunks": 0,
-            "retry_count": 0
-        }
+        self._reset_stats()
         self.custom_splitter = CustomMarkdownSplitter(
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP
         )
         logger.info(f"Initialized DocumentProcessor with path: {knowledge_base_path}")
+        logger.info(f"Configuration: min_size={min_chunk_size}, max_size={max_chunk_size}")
+
+    def _reset_stats(self):
+        """Initialize/reset processing statistics"""
+        self.processing_stats = {
+            "total_files": 0,
+            "successful_files": 0,
+            "failed_files": 0,
+            "total_chunks": 0,
+            "retry_count": 0,
+            "rejected_chunks": 0,
+            "rejection_reasons": []
+        }
 
     def _extract_document_type(self, content: str) -> DocType:
         """Extract document type from markdown content"""
@@ -90,10 +107,24 @@ class DocumentProcessor:
             doc_type = self._extract_document_type(content)
             title = self._extract_title(content)
             logger.info(f"Processing document {file_name} of type: {doc_type.value}")
+            logger.debug(f"Document title: {title}")
+            logger.debug(f"Content length: {len(content)} chars")
 
-            # Split content into chunks
-            chunk_size = 1000 if doc_type in [DocType.RULESET, DocType.LIMITATIONS] else 2000
-            chunk_overlap = 200 if doc_type in [DocType.RULESET, DocType.LIMITATIONS] else 100
+            # Split content into chunks with type-specific settings
+            if doc_type == DocType.RULESET:
+                logger.debug("Using ruleset settings for chunking")
+                chunk_size = CHUNK_SIZE
+                chunk_overlap = CHUNK_OVERLAP
+            elif doc_type == DocType.FUNCTIONS:
+                logger.debug("Using functions settings for chunking")
+                chunk_size = CODE_CHUNK_SIZE
+                chunk_overlap = CODE_CHUNK_OVERLAP
+            else:  # EXAMPLE type
+                logger.debug("Using example settings for chunking")
+                chunk_size = CODE_CHUNK_SIZE
+                chunk_overlap = CODE_CHUNK_OVERLAP
+            
+            logger.debug(f"Chunking with size={chunk_size}, overlap={chunk_overlap}")
             
             splitter = CustomMarkdownSplitter(
                 chunk_size=chunk_size,
@@ -101,21 +132,37 @@ class DocumentProcessor:
             )
             
             chunks = splitter.split_text(content)
-            logger.debug(f"Split document into {len(chunks)} chunks")
+            logger.info(f"Split document into {len(chunks)} chunks")
 
-            # Create documents with metadata - Convert Enum to string
+            # Create documents with metadata
             documents = []
             for i, chunk in enumerate(chunks):
                 if chunk.strip():  # Skip empty chunks
-                    # Convert metadata to simple types
+                    has_code = bool(re.search(r'```', chunk))
+                    logger.debug(f"Processing chunk {i+1}/{len(chunks)}, has_code={has_code}")
+                    
+                    # Use different size limits based on content type
+                    min_size = MIN_CODE_CHUNK_SIZE if has_code else MIN_CHUNK_SIZE
+                    max_size = MAX_CODE_CHUNK_SIZE if has_code else MAX_CHUNK_SIZE
+                    
+                    # Validate chunk size
+                    chunk_length = len(chunk)
+                    if chunk_length < min_size or chunk_length > max_size:
+                        logger.warning(
+                            f"Chunk size {chunk_length} outside limits "
+                            f"({min_size}, {max_size}) for {file_name}"
+                        )
+                        continue
+                    
                     metadata = {
                         "source": file_name,
-                        "doc_type": doc_type.value,  # Convert Enum to string
+                        "doc_type": doc_type.value,
                         "title": title,
-                        "has_code": bool(re.search(r'```', chunk)),
+                        "has_code": has_code,
                         "chunk_index": i,
                         "total_chunks": len(chunks),
-                        "processing_attempts": 0
+                        "processing_attempts": 0,
+                        "chunk_size": chunk_length  # Added for debugging
                     }
                     
                     doc = Document(
@@ -135,13 +182,7 @@ class DocumentProcessor:
         """Load and process all documents with improved error handling"""
         all_documents = []
         failed_files = []
-        self.processing_stats = {
-            "total_files": 0,
-            "successful_files": 0,
-            "failed_files": 0,
-            "total_chunks": 0,
-            "retry_count": 0
-        }
+        self._reset_stats()  # Reset stats at start of loading
         
         logger.info(f"Starting document loading from {self.knowledge_base_path}")
         
@@ -222,20 +263,42 @@ class DocumentProcessor:
         return ProcessingResult(False, [], errors)
 
     def _validate_chunk(self, document: Document) -> bool:
-        """Validate a document chunk"""
+        """Validate a document chunk with detailed logging"""
         try:
             content_length = len(document.page_content)
+            has_code = document.metadata.get('has_code', False)
+            
+            logger.debug(f"Validating chunk: length={content_length}, has_code={has_code}")
+            logger.debug(f"First 100 chars: {document.page_content[:100]}...")
             
             if not document.page_content.strip():
-                raise ValueError("Empty chunk")
+                reason = "Empty chunk"
+                logger.warning(reason)
+                self.processing_stats["rejection_reasons"].append(reason)
+                self.processing_stats["rejected_chunks"] += 1
+                return False
+            
+            # Use appropriate size limits based on content type
+            min_size = MIN_CODE_CHUNK_SIZE if has_code else MIN_CHUNK_SIZE
+            max_size = MAX_CODE_CHUNK_SIZE if has_code else MAX_CHUNK_SIZE
                 
-            if content_length < int(self.min_chunk_size):
-                raise ValueError(f"Chunk too small ({content_length} chars)")
+            if content_length < min_size:
+                reason = f"Chunk too small ({content_length} chars < {min_size})"
+                logger.warning(reason)
+                self.processing_stats["rejection_reasons"].append(reason)
+                self.processing_stats["rejected_chunks"] += 1
+                return False
                 
-            if content_length > int(self.max_chunk_size):
-                raise ValueError(f"Chunk too large ({content_length} chars)")
+            if content_length > max_size:
+                reason = f"Chunk too large ({content_length} chars > {max_size})"
+                logger.warning(reason)
+                self.processing_stats["rejection_reasons"].append(reason)
+                self.processing_stats["rejected_chunks"] += 1
+                return False
                 
+            logger.debug(f"Chunk validation successful: {content_length} chars")
             return True
+            
         except Exception as e:
             logger.error(f"Chunk validation error: {str(e)}")
             return False
@@ -248,6 +311,12 @@ class DocumentProcessor:
         logger.info(f"Failed to process: {self.processing_stats['failed_files']}")
         logger.info(f"Total chunks created: {self.processing_stats['total_chunks']}")
         logger.info(f"Total retry attempts: {self.processing_stats['retry_count']}")
+        logger.info(f"Rejected chunks: {self.processing_stats['rejected_chunks']}")
+        
+        if self.processing_stats['rejection_reasons']:
+            logger.info("\nRejection Reasons:")
+            for reason in self.processing_stats['rejection_reasons']:
+                logger.info(f"  - {reason}")
         
         if failed_files:
             logger.warning("\nFailed Files Details:")

@@ -11,7 +11,7 @@ import numpy as np
 import chromadb
 
 from langchain_cohere import CohereEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 from app.core.document_processor import DocType
@@ -81,18 +81,18 @@ class VectorStoreManager:
                 model=EMBEDDING_MODEL
             )
             
-            # Initialize ChromaDB client
+            # Initialize ChromaDB client with unified settings
             try:
                 from chromadb.config import Settings
                 
-                self.chroma_client = chromadb.Client(
-                    Settings(
-                        persist_directory=str(self.persist_directory),
-                        anonymized_telemetry=False,
-                        allow_reset=True,
-                        is_persistent=True
-                    )
+                self.chroma_settings = Settings(
+                    persist_directory=str(self.persist_directory),
+                    anonymized_telemetry=False,
+                    allow_reset=True,
+                    is_persistent=True
                 )
+                
+                self.chroma_client = chromadb.Client(self.chroma_settings)
                 
             except Exception as e:
                 logger.error(f"Failed to initialize ChromaDB client: {str(e)}")
@@ -108,22 +108,18 @@ class VectorStoreManager:
 
     def _process_text_for_embedding(self, text: Union[str, List[str]]) -> List[str]:
         """Process text before embedding to ensure correct format"""
+        def normalize_text(t: str) -> str:
+            # Convert to string and normalize whitespace
+            return ' '.join(str(t).split())
+            
         if isinstance(text, str):
-            return [text]
-        
+            return [normalize_text(text)]
+            
         if not isinstance(text, list):
-            return [str(text)]
+            return [normalize_text(str(text))]
             
-        # Clean and normalize texts
-        processed_texts = []
-        for t in text:
-            if not isinstance(t, str):
-                t = str(t)
-            # Remove excessive whitespace and normalize
-            t = " ".join(t.split())
-            processed_texts.append(t)
-            
-        return processed_texts
+        # Process list of texts
+        return [normalize_text(t) for t in text]
 
     def get_or_create_vector_store(self, force_recreate: bool = False) -> Chroma:
         """Get existing or create new vector store with incremental updates"""
@@ -146,17 +142,23 @@ class VectorStoreManager:
                 vector_store = Chroma(
                     client=self.chroma_client,
                     collection_name=self.COLLECTION_NAME,
-                    embedding_function=self.embeddings
+                    embedding_function=self.embeddings,
+                    persist_directory=str(self.persist_directory)
                 )
                 
                 # Process new documents in batches
                 new_docs = []
-                existing_ids = set(self.chroma_client.get(self.COLLECTION_NAME)['ids'])
-                
-                for doc in documents:
-                    doc_id = f"{doc.metadata['source']}_{hash(doc.page_content)}"
-                    if doc_id not in existing_ids:
-                        new_docs.append(doc)
+                try:
+                    collection = self.chroma_client.get_collection(self.COLLECTION_NAME)
+                    if collection:
+                        existing_ids = set(collection.get()['ids'])
+                        for doc in documents:
+                            doc_id = f"{doc.metadata['source']}_{hash(doc.page_content)}"
+                            if doc_id not in existing_ids:
+                                new_docs.append(doc)
+                except:
+                    # If collection doesn't exist, add all documents
+                    new_docs = documents
                 
                 if new_docs:
                     logger.info(f"Found {len(new_docs)} new documents to add")
@@ -189,7 +191,7 @@ class VectorStoreManager:
         try:
             if not documents:
                 logger.warning("No documents provided to create vector store")
-                return None
+                raise ValueError("Cannot create vector store with empty document list")
 
             # Reset the client to clear any existing collections
             self.chroma_client.reset()
@@ -303,11 +305,87 @@ class VectorStoreManager:
 
     def cleanup_all(self):
         """Cleanup method called on system exit"""
-        logger.info("Performing final cleanup...")
         try:
-            self.cleanup_temp_directories()
-            if hasattr(self, 'chroma_client'):
-                self.chroma_client.reset()
-            logger.info("Final cleanup completed")
-        except Exception as e:
-            logger.error(f"Error during final cleanup: {str(e)}")
+            logger = logging.getLogger(__name__)
+            handler = logging.StreamHandler()
+            logger.addHandler(handler)
+            
+            try:
+                logger.info("Performing final cleanup...")
+                
+                # First cleanup vector store
+                if hasattr(self, 'vector_store'):
+                    try:
+                        self.vector_store.delete_collection()
+                    except:
+                        pass
+                        
+                # Then cleanup embeddings
+                if hasattr(self, 'embeddings'):
+                    try:
+                        # Ensure any embedding background tasks are completed
+                        if hasattr(self.embeddings, '_executor'):
+                            self.embeddings._executor.shutdown(wait=True)
+                    except:
+                        pass
+                        
+                # Finally cleanup temporary directories
+                try:
+                    self.cleanup_temp_directories()
+                except:
+                    pass
+
+                if hasattr(self, 'chroma_client'):
+                    try:
+                        self.chroma_client.reset()
+                    except:
+                        pass
+                        
+                logger.info("Final cleanup completed")
+                
+            finally:
+                # Always remove and close the handler
+                handler.close()
+                logger.removeHandler(handler)
+                
+        except Exception:
+            # Don't log here since logger might be closed
+            pass
+
+    def cleanup_temp_directories(self):
+        """Clean up any temporary ChromaDB directories"""
+        try:
+            temp_dir = Path(tempfile.gettempdir())
+            
+            # Clean up tracked directories
+            for temp_path in self._temp_dirs.copy():
+                if temp_path.exists():
+                    try:
+                        shutil.rmtree(str(temp_path))
+                        self._temp_dirs.remove(temp_path)
+                    except Exception as e:
+                        pass
+            
+            # Clean up untracked directories
+            for item in temp_dir.glob("tmp*"):
+                if item.is_dir():
+                    try:
+                        if any(f.name == 'chroma.sqlite3' for f in item.glob('*')) or \
+                           any(f.name == 'index' for f in item.glob('*')):
+                            shutil.rmtree(str(item))
+                    except:
+                        pass
+                        
+        except Exception:
+            pass
+
+    @classmethod
+    def reset_instances(cls):
+        """Reset all instances and clean up temporary directories"""
+        for instance in cls._instances.values():
+            try:
+                instance.cleanup_all()
+            except:
+                pass
+        cls._instances.clear()
+        cls._temp_dirs.clear()

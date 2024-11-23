@@ -1,5 +1,3 @@
-# app/core/qa_chain.py
-
 import logging
 from typing import Any, Dict, List
 from langchain_anthropic import ChatAnthropic
@@ -43,37 +41,31 @@ class QAChainManager:
         self.code_chain = None
         self.error_chain = None
         self.retriever = None
+        self.last_sources = []
 
     def create_qa_chain(self, vector_store: Chroma) -> Any:
         """Create a conversational retrieval chain"""
         try:
             logger.info("Creating QA chain...")
             
-            # Set up retriever with simpler configuration
+            # Set up retriever
             self.retriever = vector_store.as_retriever(
                 search_kwargs={"k": VECTOR_STORE_TOP_K}
             )
 
-            # Define the base retrieval and formatting chain
+            # Define document formatting
             def format_docs(docs):
-                # Extract source documents for later use
                 self.last_sources = docs
-                # Convert docs to strings and join them
                 texts = [str(doc.page_content) for doc in docs]
                 return "\n\n".join(texts)
 
-            # Create the chain with proper formatting
+            # Create context getter
             def get_context(inputs):
-                question = inputs["question"]
-                # Ensure question is a string
-                if not isinstance(question, str):
-                    question = str(question)
-                # Get relevant documents
-                docs = self.retriever.get_relevant_documents(question)
-                # Format documents
+                question = str(inputs["question"])
+                docs = self.retriever.invoke(question)
                 return {"context": format_docs(docs), "question": question}
 
-            # Create specialized chains
+            # Create the specialized chains
             self.qa_chain = (
                 RunnablePassthrough.assign(context=get_context) 
                 | PROMPT_TEMPLATES["qa"] 
@@ -95,12 +87,64 @@ class QAChainManager:
                 | self.output_parser
             )
 
-            logger.info("QA chain created successfully with custom prompts")
+            logger.info("QA chain created successfully")
             return self.qa_chain
 
         except Exception as e:
             logger.error(f"Error creating QA chain: {str(e)}")
             raise
+
+    def process_query(self, chain: Any, query: str) -> Dict[str, Any]:
+        """Process a query using appropriate chain"""
+        try:
+            if not query or not isinstance(query, str) or not query.strip():
+                return {
+                    "answer": "Please provide a valid question.",
+                    "sources": [],
+                    "chat_history": []
+                }
+
+            # Clean query
+            query = " ".join(query.strip().split())
+            self.last_sources = []  # Reset sources
+
+            # Select chain based on query type
+            query_type = self.determine_query_type(query)
+            selected_chain = getattr(self, f"{query_type}_chain", chain)
+
+            try:
+                # Get response
+                response = selected_chain.invoke({"question": query})
+                
+                # Store in memory if string response
+                if isinstance(response, str):
+                    self.memory.chat_memory.add_user_message(query)
+                    self.memory.chat_memory.add_ai_message(response)
+                
+                # Format response consistently
+                formatted_response = {
+                    "answer": response,
+                    "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+                    "chat_history": self.get_chat_history()
+                }
+
+                return formatted_response
+
+            except Exception as chain_error:
+                logger.error(f"Chain error: {str(chain_error)}")
+                return {
+                    "answer": f"Error processing query: {str(chain_error)}",
+                    "sources": [],
+                    "chat_history": self.get_chat_history()
+                }
+
+        except Exception as e:
+            logger.error(f"Error in process_query: {str(e)}", exc_info=True)
+            return {
+                "answer": f"Error processing query: {str(e)}",
+                "sources": [],
+                "chat_history": self.get_chat_history()
+            }
 
     def determine_query_type(self, query: str) -> str:
         """Determine the type of query to select appropriate chain"""
@@ -114,64 +158,8 @@ class QAChainManager:
         
         return 'qa'
 
-    def process_query(self, chain: Any, query: str) -> Dict[str, Any]:
-        """Process a query using appropriate chain"""
-        try:
-            if not query or not isinstance(query, str) or not query.strip():
-                return {
-                    "answer": "Please provide a valid question.",
-                    "sources": [],
-                    "chat_history": []
-                }
-
-            # Clean and normalize query
-            query = " ".join(query.strip().split())
-
-            # Store initial sources
-            self.last_sources = []
-
-            # Determine query type and select chain
-            query_type = self.determine_query_type(query)
-            selected_chain = getattr(self, f"{query_type}_chain", chain)
-
-            try:
-                # Process query with the selected chain
-                answer = selected_chain.invoke({"question": query})
-                
-                # Store interaction in memory
-                if isinstance(answer, str):
-                    self.memory.chat_memory.add_user_message(query)
-                    self.memory.chat_memory.add_ai_message(answer)
-
-                # Get sources from the retriever's last call
-                sources = []
-                if hasattr(self, 'last_sources') and self.last_sources:
-                    sources = [doc.metadata.get('source', 'Unknown') for doc in self.last_sources]
-
-                return {
-                    "answer": answer,
-                    "sources": sources,
-                    "chat_history": self.memory.chat_memory.messages
-                }
-
-            except Exception as chain_error:
-                logger.error(f"Chain invocation error: {str(chain_error)}")
-                return {
-                    "answer": f"Error processing query: {str(chain_error)}",
-                    "sources": [],
-                    "chat_history": self.memory.chat_memory.messages
-                }
-
-        except Exception as e:
-            logger.error(f"Error in process_query: {str(e)}", exc_info=True)
-            return {
-                "answer": f"Error processing query: {str(e)}",
-                "sources": [],
-                "chat_history": self.memory.chat_memory.messages
-            }
-
     def get_chat_history(self) -> List[BaseMessage]:
-        """Get properly formatted chat history"""
+        """Get chat history messages"""
         try:
             return self.memory.chat_memory.messages
         except Exception as e:
@@ -182,6 +170,6 @@ class QAChainManager:
         """Clear conversation memory"""
         try:
             self.memory.clear()
-            logger.info("Conversation memory cleared successfully")
+            logger.info("Conversation memory cleared")
         except Exception as e:
             logger.error(f"Error clearing memory: {str(e)}")

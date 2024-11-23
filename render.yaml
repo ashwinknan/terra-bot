@@ -1,29 +1,44 @@
 services:
   - type: web
-    name: your-service-name
+    name: rag-game-assistant-backend
     env: python
     buildCommand: |
       cd backend
+      pip install --upgrade pip
       pip install -r requirements.txt
     startCommand: >
       cd backend && gunicorn "app.main:create_app()" 
-      --timeout 120 
+      --timeout 180 
       --workers 2 
       --threads 4 
-      --worker-class gthread
-      --log-level info
+      --worker-class gthread 
+      --log-level info 
+      --bind 0.0.0.0:$PORT 
+      --preload
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
-      - key: PORT
-        value: 10000
       - key: FLASK_DEBUG
         value: false
-      - key: GUNICORN_TIMEOUT
-        value: 120
-    healthCheckPath: /
+      - key: ENABLE_CACHE
+        value: true
+      - key: CACHE_DIR
+        value: /opt/render/project/src/backend/.cache
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false
+      - key: MAX_CHUNK_SIZE
+        value: 4500
+      - key: CHUNK_SIZE
+        value: 2000
+      - key: CHUNK_OVERLAP
+        value: 200
+    healthCheckPath: /api/
     autoDeploy: true
     disk:
-      name: data
-      mountPath: /opt/render/project/src/backend/data
+      name: cache
+      mountPath: /opt/render/project/src/backend/.cache
       sizeGB: 1

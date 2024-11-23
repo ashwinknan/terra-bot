@@ -3,7 +3,8 @@
 import logging
 import argparse
 import os
-from flask import Flask
+from threading import Thread  # Added missing Thread import
+from flask import Flask, jsonify
 from flask_cors import CORS
 from app.api.routes import api_bp
 from app.core.initializer import initialize_app
@@ -16,33 +17,45 @@ logger = logging.getLogger(__name__)
 
 def create_app(force_recreate=False):
     """Application factory function"""
-    # Check versions before starting
-    if not check_versions():
-        logger.warning("Version mismatches detected. Application may not work as expected.")
-
-    # Verify LLM connection before starting
-    if not check_llm_connection():
-        logger.error("LLM connection check failed - check your configuration")
-        raise RuntimeError("LLM connection check failed")
-    
-    logger.info("Creating Flask application...")
-    app = Flask(__name__)
-    
-    # Configure CORS with settings from config
-    CORS(app, 
-         origins=[ALLOWED_ORIGIN],
-         allow_headers=["Content-Type"],
-         methods=["GET", "POST", "OPTIONS"])
-    
-    # Register blueprints
-    app.register_blueprint(api_bp, url_prefix='/api')
-    
-    # Initialize components
-    logger.info("Initializing application components...")
-    initialize_app(force_recreate)
-    
-    logger.info("Application creation completed successfully")
-    return app
+    try:
+        app = Flask(__name__)
+        
+        # Configure CORS with settings from config
+        CORS(app, 
+             origins=[ALLOWED_ORIGIN],
+             allow_headers=["Content-Type"],
+             methods=["GET", "POST", "OPTIONS"])
+        
+        # Register blueprints
+        app.register_blueprint(api_bp, url_prefix='/api')
+        
+        # Initialize components in background thread
+        def init_background():
+            try:
+                if not check_versions():
+                    logger.warning("Version mismatches detected")
+                if not check_llm_connection():
+                    logger.error("LLM connection check failed")
+                initialize_app(force_recreate)
+            except Exception as e:
+                logger.error(f"Background initialization error: {e}")
+        
+        Thread(target=init_background, daemon=True).start()
+        
+        # Add basic route for root path
+        @app.route('/')
+        def root():
+            return jsonify({
+                "status": "healthy",
+                "message": "RAG Game Assistant API"
+            })
+        
+        logger.info("Application creation completed successfully")
+        return app
+        
+    except Exception as e:
+        logger.error(f"Error creating application: {str(e)}")
+        raise
 
 def main():
     parser = argparse.ArgumentParser(description='Run the QA system')
