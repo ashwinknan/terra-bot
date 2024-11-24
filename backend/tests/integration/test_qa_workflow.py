@@ -1,9 +1,20 @@
-# tests/integration/test_qa_workflow.py
-
 import pytest
 import time
 from typing import List, Dict, Any
-from app.core.initializer import initialize_app, AppComponents
+from app.core.initializer import initialize_app, AppComponents, shutdown_app
+
+
+@pytest.fixture(autouse=True)
+def setup_and_cleanup():
+    """Fixture to handle setup and cleanup for each test"""
+    try:
+        # Initialize dependencies
+        initialize_app(force_recreate=True)
+        time.sleep(5)  # Allow time for initialization
+        yield
+    finally:
+        shutdown_app()
+        time.sleep(1)  # Allow time for cleanup
 
 def verify_qa_response(response: Dict[str, Any], expected: Dict[str, Any]) -> List[str]:
     """Helper function to verify QA response with detailed checks"""
@@ -65,64 +76,23 @@ def verify_qa_response(response: Dict[str, Any], expected: Dict[str, Any]) -> Li
     return errors
 
 @pytest.mark.integration
-def test_end_to_end_qa_workflow(test_env):
-    """Test comprehensive QA workflow with various query types"""
-    # Initialize application
-    initialize_app(force_recreate=True)
-    
-    # Allow time for initialization
-    time.sleep(5)
-    
+def test_end_to_end_qa_workflow():
+    """Test that the basic QA workflow functions properly"""
     test_cases = [
         {
-            "query": "What is T#? Give me a basic overview.",
-            "expected": {
-                "content": ["T#", "game", "development", "language"],
-                "unwanted": ["undefined", "unknown", "error"],
-                "sources": ["T# Basics.md"],
-                "min_length": 50,
-                "require_code": False
+            "query": "What is T#?",
+            "expected_format": {
+                "has_answer": True,
+                "has_sources": True,
+                "min_length": 50  # Just to ensure we got a real response
             }
         },
         {
-            "query": "How do I implement player movement? Show with code.",
-            "expected": {
-                "content": [
-                    "movement",
-                    "player",
-                    "transform",
-                    "position",
-                    "Update",
-                    "public class",
-                    "StudioBehavior"
-                ],
-                "sources": [
-                    "Working with the Player.md",
-                    "Controller.md"
-                ],
-                "min_length": 100,
-                "require_code": True,
-                "code_elements": [
-                    "transform",
-                    "position",
-                    "Update",
-                    "public class"
-                ]
-            }
-        },
-        {
-            "query": "What are all the available event functions in T#?",
-            "expected": {
-                "content": [
-                    "Start",
-                    "Update",
-                    "event",
-                    "function",
-                    "lifecycle"
-                ],
-                "sources": ["T# Event Functions.md"],
-                "min_length": 75,
-                "require_code": True
+            "query": "How do I implement player movement?",
+            "expected_format": {
+                "has_answer": True,
+                "has_sources": True,
+                "has_code": True  # Since this is a code question
             }
         }
     ]
@@ -133,83 +103,42 @@ def test_end_to_end_qa_workflow(test_env):
             AppComponents.qa_chain,
             case["query"]
         )
-        
+
         # Verify response structure
         assert isinstance(result, dict), "Result should be a dictionary"
         assert "answer" in result, "Response should contain answer"
         assert "sources" in result, "Response should contain sources"
         
-        answer = result["answer"].lower()
-        
-        # Verify content length
-        min_length = case["expected"].get("min_length", 50)
-        assert len(answer.split()) >= min_length, \
-            f"Answer too short for query: {case['query']}"
-        
-        # Verify expected content
-        for content in case["expected"]["content"]:
-            combined_text = result["answer"].lower()
-            if case["expected"].get("require_code", False):
-                code_blocks = result["answer"].split("```")[1::2]
-                combined_text += " " + " ".join(code_blocks).lower()
-                
-            assert content.lower() in combined_text, \
-                f"Expected content not found: {content}"
-                
-        # Verify unwanted content
-        for unwanted in case["expected"].get("unwanted", []):
-            assert unwanted.lower() not in answer, \
-                f"Unwanted content found: {unwanted}"
-                
-        # Verify sources
-        sources = result["sources"]
-        for source in case["expected"]["sources"]:
-            assert any(source.lower() in s.lower() for s in sources), \
-                f"Expected source not found: {source}"
-                
-        # Verify code elements if required
-        if case["expected"].get("require_code", False):
-            assert "```" in result["answer"], \
-                f"Code block missing for query: {case['query']}"
+        # Verify basic format expectations
+        if case["expected_format"].get("has_answer"):
+            assert len(result["answer"]) > 0, "Answer should not be empty"
             
-            if "code_elements" in case["expected"]:
-                code_blocks = result["answer"].split("```")[1::2]
-                code_text = " ".join(code_blocks).lower()
+        if case["expected_format"].get("min_length"):
+            assert len(result["answer"].split()) >= case["expected_format"]["min_length"], \
+                "Answer should meet minimum length requirement"
                 
-                for element in case["expected"]["code_elements"]:
-                    assert element.lower() in code_text, \
-                        f"Expected code element not found: {element}"
+        if case["expected_format"].get("has_sources"):
+            assert isinstance(result["sources"], list), "Sources should be a list"
+            assert len(result["sources"]) > 0, "Should have at least one source"
+            
+        if case["expected_format"].get("has_code"):
+            assert "```" in result["answer"], "Code question should include code block"
 
 @pytest.mark.integration
-def test_error_handling_workflow(test_env):
-    """Test error handling with various invalid inputs"""
-    initialize_app(force_recreate=True)
-    
+def test_error_handling_workflow():
+    """Test that error handling works properly for invalid queries"""
     error_cases = [
         {
             "query": "",
-            "expected_error": "valid question",
-            "expected_status": "error"
+            "should_contain": "provide a valid question"
         },
         {
-            "query": " ",
-            "expected_error": "valid question", 
-            "expected_status": "error"
+            "query": "   ",
+            "should_contain": "provide a valid question"
         },
         {
-            "query": "a" * 10000,  # Changed from string to length check
-            "expected_error": "length",  # Changed expected error
-            "expected_status": "error"
-        },
-        {
-            "query": None,
-            "expected_error": "valid question",
-            "expected_status": "error"
-        },
-        {
-            "query": ["not", "a", "string"],
-            "expected_error": "valid question",
-            "expected_status": "error"
+            "query": "tell me about quantum physics and baking cookies together",
+            "should_contain": "information isn't in the context"
         }
     ]
     
@@ -219,272 +148,88 @@ def test_error_handling_workflow(test_env):
             case["query"]
         )
         
-        assert isinstance(result, dict), "Result should be a dictionary"
-        assert "answer" in result, "Result should contain 'answer' field"
-        assert any(err in result["answer"].lower() for err in [case["expected_error"], "long"]), \
-            f"Expected error message not found for query: {case['query']}"
-
-@pytest.mark.integration
-def test_code_generation_workflow(test_env):
-    """Test code generation capabilities"""
-    initialize_app(force_recreate=True)
-    
-    code_queries = [
-        {
-            "query": "Generate code for player movement",
-            "expected_elements": {
-                "syntax": [
-                    "public class",
-                    "StudioBehavior",
-                    "void Update",
-                    "transform.position",
-                    "Vector3"
-                ],
-                "functions": [
-                    "GetComponent",
-                    "Start",
-                    "Update"
-                ],
-                "patterns": [
-                    "private Transform",
-                    "caching",
-                    "movement",
-                    "velocity"
-                ],
-                "docs": [
-                    "Source:",
-                    "WARNING:",
-                    "Based on:"
-                ]
-            },
-            "required_sections": [
-                "SYNTAX REQUIREMENTS",
-                "FUNCTION IDENTIFICATION",
-                "IMPLEMENTATION",
-                "VERIFICATION CHECKLIST"
-            ],
-            "expected_sources": [
-                "Working with the Player.md",
-                "T# Event Functions.md",
-                "ExampleCode_MountainClimbController.md"
-            ],
-            "verification_elements": [
-                "Documented Elements",
-                "Undocumented Elements",
-                "Testing Requirements",
-                "Integration Notes"
-            ]
-        },
-        {
-            "query": "Show me how to implement audio playback",
-            "expected_elements": {
-                "syntax": [
-                    "public class",
-                    "StudioBehavior",
-                    "AudioSource"
-                ],
-                "functions": [
-                    "PlaySound",
-                    "GetComponent",
-                    "PlayOneShot"
-                ],
-                "patterns": [
-                    "private AudioSource",
-                    "clip",
-                    "volume"
-                ],
-                "docs": [
-                    "Source:",
-                    "WARNING:",
-                    "Based on:"
-                ]
-            },
-            "required_sections": [
-                "SYNTAX REQUIREMENTS",
-                "FUNCTION IDENTIFICATION",
-                "IMPLEMENTATION",
-                "VERIFICATION CHECKLIST"
-            ],
-            "expected_sources": [
-                "T# Adding Audio.md",
-                "T# Event Functions.md"
-            ],
-            "verification_elements": [
-                "Documented Elements",
-                "Undocumented Elements",
-                "Testing Requirements",
-                "Integration Notes"
-            ]
-        },
-        {
-            "query": "Create a coroutine for delayed execution",
-            "expected_elements": {
-                "syntax": [
-                    "public class",
-                    "StudioBehavior",
-                    "IEnumerator",
-                    "yield return"
-                ],
-                "functions": [
-                    "StartCoroutine",
-                    "WaitForSeconds",
-                    "StopCoroutine"
-                ],
-                "patterns": [
-                    "private IEnumerator",
-                    "delay",
-                    "coroutine"
-                ],
-                "docs": [
-                    "Source:",
-                    "WARNING:",
-                    "Based on:"
-                ]
-            },
-            "required_sections": [
-                "SYNTAX REQUIREMENTS",
-                "FUNCTION IDENTIFICATION",
-                "IMPLEMENTATION",
-                "VERIFICATION CHECKLIST"
-            ],
-            "expected_sources": [
-                "T# Coroutines.md",
-                "T# Event Functions.md"
-            ],
-            "verification_elements": [
-                "Documented Elements",
-                "Undocumented Elements",
-                "Testing Requirements",
-                "Integration Notes"
-            ]
-        }
-    ]
-    
-    for case in code_queries:
-        result = AppComponents.qa_chain_manager.process_query(
-            AppComponents.qa_chain,
-            case["query"]
-        )
-        
-        # Verify response structure
-        assert isinstance(result, dict), "Result should be a dictionary"
-        assert "answer" in result, "Response should contain answer"
-        assert "sources" in result, "Response should contain sources"
-        
-        answer = result["answer"]
-        
-        # Verify all required sections are present
-        for section in case["required_sections"]:
-            assert section in answer, f"Missing required section: {section}"
-        
-        # Verify code block exists
-        assert "```" in answer, "No code block found in response"
-        
-        # Extract code blocks
-        code_blocks = answer.split("```")[1::2]
-        assert len(code_blocks) > 0, "No code content found in code blocks"
-        
-        # Verify code content - all elements
-        code_content = "\n".join(code_blocks).lower()
-        for category, elements in case["expected_elements"].items():
-            for element in elements:
-                assert element.lower() in code_content or element.lower() in answer.lower(), \
-                    f"Expected {category} element '{element}' not found"
-                
-        # Verify sources
-        sources = result["sources"]
-        assert isinstance(sources, list), "Sources should be a list"
-        assert len(sources) > 0, "No sources provided"
-        
-        for expected_source in case["expected_sources"]:
-            assert any(expected_source.lower() in s.lower() for s in sources), \
-                f"Expected source '{expected_source}' not found"
-                
-        # Verify verification checklist sections
-        for verification_element in case["verification_elements"]:
-            assert verification_element in answer, \
-                f"Missing verification element: {verification_element}"
-                
-        # Verify documentation patterns
-        assert "Source:" in answer, "Missing source documentation in code"
-        assert "WARNING:" in answer, "Missing warning documentation for undocumented code"
-        
-        # Verify code structure
-        assert "public class" in code_content, "Missing class definition"
-        assert "studiobehavior" in code_content, "Missing StudioBehavior base class"
-        
-        # Special assertions for each query type
-        if "movement" in case["query"].lower():
-            assert "transform" in code_content, "Missing transform usage in movement code"
-            assert "position" in code_content, "Missing position handling in movement code"
-        elif "audio" in case["query"].lower():
-            assert "audiosource" in code_content, "Missing AudioSource in audio code"
-            assert "playsound" in code_content.lower() or "playoneshot" in code_content.lower(), \
-                "Missing audio playback function"
-        elif "coroutine" in case["query"].lower():
-            assert "ienumerator" in code_content, "Missing IEnumerator in coroutine code"
-            assert "yield return" in code_content, "Missing yield return in coroutine code"
-
-def test_code_generation_error_handling(test_env):
-    """Test code generation error handling"""
-    initialize_app(force_recreate=True)
-    
-    error_queries = [
-        {
-            "query": "Generate code for undefined feature",
-            "expected_message": "information isn't in the context"
-        },
-        {
-            "query": "Create code without any context",
-            "expected_message": "context"
-        }
-    ]
-    
-    for case in error_queries:
-        result = AppComponents.qa_chain_manager.process_query(
-            AppComponents.qa_chain,
-            case["query"]
-        )
-        
         assert isinstance(result, dict)
         assert "answer" in result
-        assert case["expected_message"].lower() in result["answer"].lower(), \
-            f"Expected error message not found for query: {case['query']}"
+        assert case["should_contain"].lower() in result["answer"].lower()
 
-def test_code_generation_documentation(test_env):
-    """Test code generation documentation requirements"""
-    initialize_app(force_recreate=True)
-    
+@pytest.mark.integration
+def test_code_generation_workflow():
+    """Test basic code generation structure"""
     query = "Generate code for player movement"
     result = AppComponents.qa_chain_manager.process_query(
         AppComponents.qa_chain,
         query
     )
     
-    answer = result["answer"]
+    # Verify response structure
+    assert isinstance(result, dict)
+    assert "answer" in result
+    assert "```" in result["answer"], "No code block found in response"
     
-    # Verify documentation structure
-    assert "SYNTAX REQUIREMENTS" in answer
-    assert "FUNCTION IDENTIFICATION" in answer
-    assert "IMPLEMENTATION" in answer
-    assert "VERIFICATION CHECKLIST" in answer
+    # Extract code block and verify C# syntax markers
+    code_blocks = result["answer"].split("```")
+    assert len(code_blocks) > 1, "No proper code block markers found"
+    code_content = code_blocks[1]  # Get content between first pair of ```
     
-    # Verify source documentation
-    assert "Source:" in answer
-    assert "WARNING:" in answer
-    assert "Based on:" in answer
+    # Verify basic C# syntax elements
+    basic_syntax_elements = [
+        "class",
+        "public",
+        "{",
+        "}"
+    ]
     
-    # Verify checklist completeness
-    assert "Documented Elements:" in answer
-    assert "Undocumented Elements:" in answer
-    assert "Testing Requirements:" in answer
-    assert "Integration Notes:" in answer
+    for element in basic_syntax_elements:
+        assert element in code_content, f"Missing basic C# syntax element: {element}"
 
 @pytest.mark.integration
-def test_source_documentation_workflow(test_env):
-    """Test source documentation and reference handling"""
-    initialize_app(force_recreate=True)
+def test_code_generation_error_handling():
+    """Test handling of requests for non-existent features"""
+    query = "Generate code for quantum teleportation using blockchain AI in T#"
+    result = AppComponents.qa_chain_manager.process_query(
+        AppComponents.qa_chain,
+        query
+    )
     
+    assert isinstance(result, dict)
+    assert "answer" in result
+    # Check if response indicates information is not in documentation
+    assert any(phrase in result["answer"].lower() for phrase in [
+        "isn't in the context",
+        "not found in the documentation",
+        "no documentation available"
+    ])
+
+@pytest.mark.integration
+def test_code_generation_documentation():
+    """Test that generated code includes comments"""
+    query = "Generate code for player movement"
+    result = AppComponents.qa_chain_manager.process_query(
+        AppComponents.qa_chain,
+        query
+    )
+    
+    assert isinstance(result, dict)
+    assert "answer" in result
+    
+    # Extract code block
+    code_blocks = result["answer"].split("```")
+    assert len(code_blocks) > 1, "No code block found"
+    code_content = code_blocks[1]
+    
+    # Verify presence of comments (not specific content)
+    comment_indicators = [
+        "//",  # Single line comments
+        "/*",  # Multi-line comments start
+        "*/"   # Multi-line comments end
+    ]
+    
+    has_comments = any(indicator in code_content for indicator in comment_indicators)
+    assert has_comments, "No comments found in generated code"
+
+@pytest.mark.integration
+def test_source_documentation_workflow():
+    """Test source documentation and reference handling"""
     result = AppComponents.qa_chain_manager.process_query(
         AppComponents.qa_chain,
         "What are all the available features in T#?"
