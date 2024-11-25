@@ -3,7 +3,6 @@
 import logging
 import argparse
 import os
-from threading import Thread  # Added missing Thread import
 from flask import Flask, jsonify
 from flask_cors import CORS
 from app.api.routes import api_bp
@@ -27,7 +26,7 @@ def create_app(force_recreate=False):
             allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
             supports_credentials=True,
             expose_headers=["Content-Type"],
-            max_age=3600  # Add cache duration for preflight requests
+            max_age=3600
         )
         
         # Add CORS headers to all responses
@@ -39,21 +38,19 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
         
+        # Initialize components before registering blueprints
+        logger.info("Starting application initialization...")
+        if not check_versions():
+            logger.warning("Version mismatches detected")
+        if not check_llm_connection():
+            logger.error("LLM connection check failed")
+            
+        # Initialize app (blocking)
+        initialize_app(force_recreate)
+        logger.info("Application initialization completed")
+        
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
-        
-        # Initialize components in background thread
-        def init_background():
-            try:
-                if not check_versions():
-                    logger.warning("Version mismatches detected")
-                if not check_llm_connection():
-                    logger.error("LLM connection check failed")
-                initialize_app(force_recreate)
-            except Exception as e:
-                logger.error(f"Background initialization error: {e}")
-        
-        Thread(target=init_background, daemon=True).start()
         
         # Add basic route for root path
         @app.route('/')
@@ -78,9 +75,7 @@ def main():
 
     app = create_app(force_recreate=args.recreate_vector_store)
     
-    # Get port from environment variable or use default
     port = int(os.environ.get('PORT', 5001))
-    
     logger.info(f"Starting Flask server on port {port}...")
     app.run(debug=DEBUG, host='0.0.0.0', port=port)
 
