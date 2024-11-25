@@ -108,32 +108,52 @@ class QAChainManager:
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
 
+            # Add timeout handling
+            import signal
+            from contextlib import contextmanager
+
+            @contextmanager
+            def timeout(seconds):
+                def signal_handler(signum, frame):
+                    raise TimeoutError("Query processing timed out")
+                
+                # Set the signal handler and a 60-second alarm
+                signal.signal(signal.SIGALRM, signal_handler)
+                signal.alarm(seconds)
+                
+                try:
+                    yield
+                finally:
+                    signal.alarm(0)  # Disable the alarm
+
             # Select chain based on query type
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
 
             try:
-                # Get response
-                response = selected_chain.invoke({"question": query})
-                
-                # Store in memory if string response
-                if isinstance(response, str):
-                    self.memory.chat_memory.add_user_message(query)
-                    self.memory.chat_memory.add_ai_message(response)
-                
-                # Format response consistently
-                formatted_response = {
-                    "answer": response,
-                    "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
-                    "chat_history": self.get_chat_history()
-                }
+                # Execute with timeout
+                with timeout(60):  # 60 second timeout
+                    # Get response
+                    response = selected_chain.invoke({"question": query})
+                    
+                    # Store in memory if string response
+                    if isinstance(response, str):
+                        self.memory.chat_memory.add_user_message(query)
+                        self.memory.chat_memory.add_ai_message(response)
+                    
+                    # Format response consistently
+                    formatted_response = {
+                        "answer": response,
+                        "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+                        "chat_history": self.get_chat_history()
+                    }
 
-                return formatted_response
+                    return formatted_response
 
-            except Exception as chain_error:
-                logger.error(f"Chain error: {str(chain_error)}")
+            except TimeoutError:
+                logger.error("Query processing timed out")
                 return {
-                    "answer": f"Error processing query: {str(chain_error)}",
+                    "answer": "The request timed out. Please try a shorter or simpler question.",
                     "sources": [],
                     "chat_history": self.get_chat_history()
                 }
@@ -145,6 +165,7 @@ class QAChainManager:
                 "sources": [],
                 "chat_history": self.get_chat_history()
             }
+                
 
     def determine_query_type(self, query: str) -> str:
         """Determine the type of query to select appropriate chain"""

@@ -16,6 +16,11 @@
     │   └── README.md
     ├── backend
     │   ├── .cache
+    │   │   ├── 998913a0-b3a3-459f-a229-86ba3d2d2a03
+    │   │   │   ├── data_level0.bin
+    │   │   │   ├── header.bin
+    │   │   │   ├── length.bin
+    │   │   │   └── link_lists.bin
     │   │   └── chroma.sqlite3
     │   ├── .pytest_cache
     │   │   ├── v
@@ -723,19 +728,15 @@ services:
   - type: web
     name: rag-game-assistant-backend
     env: python
-    buildCommand: |
-      cd backend
-      pip install --upgrade pip
-      pip install -r requirements.txt
+    buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
     startCommand: >
       cd backend && gunicorn "app.main:create_app()" 
-      --timeout 180 
-      --workers 2 
-      --threads 4 
-      --worker-class gthread 
-      --log-level info 
-      --bind 0.0.0.0:$PORT 
-      --preload
+      --timeout 300 
+      --workers 1
+      --threads 4
+      --worker-class gthread
+      --log-level info
+      --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
@@ -751,18 +752,39 @@ services:
         sync: false
       - key: ALLOWED_ORIGIN
         sync: false
-      - key: MAX_CHUNK_SIZE
-        value: 4500
-      - key: CHUNK_SIZE
-        value: 2000
-      - key: CHUNK_OVERLAP
-        value: 200
+      - key: VECTOR_STORE_SIMILARITY_THRESHOLD
+        value: "0.3"
+      - key: VECTOR_STORE_TOP_K
+        value: "8"
+      - key: LLM_TEMPERATURE
+        value: "0.3"
+      - key: LLM_MAX_TOKENS
+        value: "4096"
+      - key: MMR_DIVERSITY_SCORE
+        value: "0.3"
     healthCheckPath: /api/
     autoDeploy: true
     disk:
       name: cache
       mountPath: /opt/render/project/src/backend/.cache
       sizeGB: 1
+
+  - type: web
+    name: rag-game-assistant-frontend
+    env: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/build
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        value: https://rag-game-assistant.onrender.com # Change to your backend URL
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
 ```
 
 # File: frontend/src/App.js
@@ -1095,7 +1117,6 @@ from app.main import create_app
 import logging
 import argparse
 import os
-from threading import Thread  # Added missing Thread import
 from flask import Flask, jsonify
 from flask_cors import CORS
 from app.api.routes import api_bp
@@ -1119,7 +1140,7 @@ def create_app(force_recreate=False):
             allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
             supports_credentials=True,
             expose_headers=["Content-Type"],
-            max_age=3600  # Add cache duration for preflight requests
+            max_age=3600
         )
         
         # Add CORS headers to all responses
@@ -1131,21 +1152,19 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
         
+        # Initialize components before registering blueprints
+        logger.info("Starting application initialization...")
+        if not check_versions():
+            logger.warning("Version mismatches detected")
+        if not check_llm_connection():
+            logger.error("LLM connection check failed")
+            
+        # Initialize app (blocking)
+        initialize_app(force_recreate)
+        logger.info("Application initialization completed")
+        
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
-        
-        # Initialize components in background thread
-        def init_background():
-            try:
-                if not check_versions():
-                    logger.warning("Version mismatches detected")
-                if not check_llm_connection():
-                    logger.error("LLM connection check failed")
-                initialize_app(force_recreate)
-            except Exception as e:
-                logger.error(f"Background initialization error: {e}")
-        
-        Thread(target=init_background, daemon=True).start()
         
         # Add basic route for root path
         @app.route('/')
@@ -1170,9 +1189,7 @@ def main():
 
     app = create_app(force_recreate=args.recreate_vector_store)
     
-    # Get port from environment variable or use default
     port = int(os.environ.get('PORT', 5001))
-    
     logger.info(f"Starting Flask server on port {port}...")
     app.run(debug=DEBUG, host='0.0.0.0', port=port)
 
@@ -2393,6 +2410,10 @@ Optional Environment Variables:
 - MAX_CHUNK_SIZE: Maximum allowed chunk size (default: 3000)
 """
 
+# File: backend/app/config/settings.py
+
+# File: backend/app/config/settings.py
+
 import os
 import logging
 from typing import Any, Dict
@@ -2400,101 +2421,127 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-
 # Load environment variables
 load_dotenv()
 
+def get_env_float(key: str, default: float) -> float:
+    """Get float from environment with fallback"""
+    try:
+        value = os.getenv(key)
+        return float(value) if value is not None else default
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid value for {key}, using default: {default}")
+        return default
+
+def get_env_int(key: str, default: int) -> int:
+    """Get integer from environment with fallback"""
+    try:
+        value = os.getenv(key)
+        return int(value) if value is not None else default
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid value for {key}, using default: {default}")
+        return default
+
+def get_env_bool(key: str, default: bool) -> bool:
+    """Get boolean from environment with fallback"""
+    value = os.getenv(key, str(default)).lower()
+    return value in ('true', '1', 't')
+
 # API Keys
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 # Application settings
-DEBUG = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "t")
+DEBUG = get_env_bool("FLASK_DEBUG", False)
 ALLOWED_ORIGIN = os.getenv('ALLOWED_ORIGIN', 'http://localhost:3000')
 
-# Vector store settings
-VECTOR_STORE_SIMILARITY_THRESHOLD = float(os.getenv('VECTOR_STORE_SIMILARITY_THRESHOLD', '0.3'))
-VECTOR_STORE_TOP_K = int(os.getenv('VECTOR_STORE_TOP_K', '8'))
+# Vector store settings - using get_env_float to handle validation
+VECTOR_STORE_SIMILARITY_THRESHOLD = max(0.0, min(1.0, get_env_float('VECTOR_STORE_SIMILARITY_THRESHOLD', 0.3)))
+VECTOR_STORE_TOP_K = get_env_int('VECTOR_STORE_TOP_K', 8)
 
 # Embedding settings
 EMBEDDING_MODEL = os.getenv('COHERE_MODEL', 'embed-multilingual-v2.0')
 
 # LLM settings
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-3-sonnet-20240229')
-LLM_TEMPERATURE = float(os.getenv('LLM_TEMPERATURE', '0.3'))
-LLM_MAX_TOKENS = int(os.getenv('LLM_MAX_TOKENS', '4096'))
+LLM_TEMPERATURE = max(0.0, min(1.0, get_env_float('LLM_TEMPERATURE', 0.3)))
+LLM_MAX_TOKENS = get_env_int('LLM_MAX_TOKENS', 4096)
 
 # Chunking settings
-CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '2000'))
-CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '200'))
+CHUNK_SIZE = get_env_int('CHUNK_SIZE', 2000)
+CHUNK_OVERLAP = get_env_int('CHUNK_OVERLAP', 200)
 
 # Retrieval settings
-RETRIEVAL_MODE = os.getenv('RETRIEVAL_MODE', 'mmr')  # 'similarity' or 'mmr'
-MMR_DIVERSITY_SCORE = float(os.getenv('MMR_DIVERSITY_SCORE', '0.3'))  # Added this line
+RETRIEVAL_MODE = os.getenv('RETRIEVAL_MODE', 'mmr')
+MMR_DIVERSITY_SCORE = max(0.0, min(1.0, get_env_float('MMR_DIVERSITY_SCORE', 0.3)))
 
 # Cache settings
-ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'True').lower() in ('true', '1', 't')
+ENABLE_CACHE = get_env_bool('ENABLE_CACHE', True)
 CACHE_DIR = os.getenv('CACHE_DIR', '.cache')
 
 # Document processing settings
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
-RETRY_DELAY = float(os.getenv('RETRY_DELAY', '1.0'))
-MIN_CHUNK_SIZE = int(os.getenv('MIN_CHUNK_SIZE', '100'))
-MAX_CHUNK_SIZE = int(os.getenv('MAX_CHUNK_SIZE', '8000'))
+MAX_RETRIES = get_env_int('MAX_RETRIES', 3)
+RETRY_DELAY = get_env_float('RETRY_DELAY', 1.0)
+MIN_CHUNK_SIZE = get_env_int('MIN_CHUNK_SIZE', 100)
+MAX_CHUNK_SIZE = get_env_int('MAX_CHUNK_SIZE', 8000)
 
 # Special settings for code chunks
-CODE_CHUNK_SIZE = int(os.getenv('CODE_CHUNK_SIZE', '11800'))  # Reduced from 12000 to allow for markers
-CODE_CHUNK_OVERLAP = int(os.getenv('CODE_CHUNK_OVERLAP', '400'))
-MIN_CODE_CHUNK_SIZE = int(os.getenv('MIN_CODE_CHUNK_SIZE', '50'))
-MAX_CODE_CHUNK_SIZE = int(os.getenv('MAX_CODE_CHUNK_SIZE', '11800'))  # Reduced to match CODE_CHUNK_SIZE
+CODE_CHUNK_SIZE = get_env_int('CODE_CHUNK_SIZE', 11800)
+CODE_CHUNK_OVERLAP = get_env_int('CODE_CHUNK_OVERLAP', 400)
+MIN_CODE_CHUNK_SIZE = get_env_int('MIN_CODE_CHUNK_SIZE', 50)
+MAX_CODE_CHUNK_SIZE = get_env_int('MAX_CODE_CHUNK_SIZE', 11800)
 
 def validate_settings() -> Dict[str, Any]:
     """Validate all settings and return current configuration"""
-    config = {
-        'api_keys': {
-            'anthropic': bool(ANTHROPIC_API_KEY),
-            'cohere': bool(COHERE_API_KEY),
-        },
-        'vector_store': {
-            'similarity_threshold': VECTOR_STORE_SIMILARITY_THRESHOLD,
-            'top_k': VECTOR_STORE_TOP_K,
-        },
-        'llm': {
-            'model': CLAUDE_MODEL,
-            'temperature': LLM_TEMPERATURE,
-            'max_tokens': LLM_MAX_TOKENS,
-        },
-        'processing': {
-            'chunk_size': CHUNK_SIZE,
-            'chunk_overlap': CHUNK_OVERLAP,
-            'min_chunk_size': MIN_CHUNK_SIZE,
-            'max_chunk_size': MAX_CHUNK_SIZE,
-        },
-        'cache': {
-            'enabled': ENABLE_CACHE,
-            'directory': CACHE_DIR,
-        }
-    }
-
-    # Validation checks
     try:
-        assert 0 <= VECTOR_STORE_SIMILARITY_THRESHOLD <= 1, "Similarity threshold must be between 0 and 1"
-        assert 0 <= LLM_TEMPERATURE <= 1, "LLM temperature must be between 0 and 1"
-        assert MIN_CHUNK_SIZE < MAX_CHUNK_SIZE, "Min chunk size must be less than max chunk size"
-        assert CHUNK_OVERLAP < CHUNK_SIZE, "Chunk overlap must be less than chunk size"
-        assert VECTOR_STORE_TOP_K > 0, "Top K must be positive"
-        assert LLM_MAX_TOKENS > 0, "Max tokens must be positive"
-        assert 0 <= MMR_DIVERSITY_SCORE <= 1, "MMR diversity score must be between 0 and 1"
-        
+        # Check required API keys
+        if not ANTHROPIC_API_KEY:
+            logger.warning("ANTHROPIC_API_KEY not set")
+        if not COHERE_API_KEY:
+            logger.warning("COHERE_API_KEY not set")
+
+        # Validate chunk sizes
+        if MIN_CHUNK_SIZE >= MAX_CHUNK_SIZE:
+            logger.warning("MIN_CHUNK_SIZE must be less than MAX_CHUNK_SIZE")
+
+        if CHUNK_OVERLAP >= CHUNK_SIZE:
+            logger.warning("CHUNK_OVERLAP must be less than CHUNK_SIZE")
+
+        # Create cache directory if enabled
         if ENABLE_CACHE:
             os.makedirs(CACHE_DIR, exist_ok=True)
-            
+
+        config = {
+            'api_keys': {
+                'anthropic': bool(ANTHROPIC_API_KEY),
+                'cohere': bool(COHERE_API_KEY),
+            },
+            'vector_store': {
+                'similarity_threshold': VECTOR_STORE_SIMILARITY_THRESHOLD,
+                'top_k': VECTOR_STORE_TOP_K,
+            },
+            'llm': {
+                'model': CLAUDE_MODEL,
+                'temperature': LLM_TEMPERATURE,
+                'max_tokens': LLM_MAX_TOKENS,
+            },
+            'processing': {
+                'chunk_size': CHUNK_SIZE,
+                'chunk_overlap': CHUNK_OVERLAP,
+                'min_chunk_size': MIN_CHUNK_SIZE,
+                'max_chunk_size': MAX_CHUNK_SIZE,
+            },
+            'cache': {
+                'enabled': ENABLE_CACHE,
+                'directory': CACHE_DIR,
+            }
+        }
+
         logger.info("Configuration validated successfully")
         return config
-        
+
     except Exception as e:
-        logger.error(f"Configuration validation failed: {str(e)}")
+        logger.error(f"Configuration validation error: {str(e)}")
         raise
 
 # Validate settings on import
@@ -5387,7 +5434,6 @@ from app.main import create_app
 import logging
 import argparse
 import os
-from threading import Thread  # Added missing Thread import
 from flask import Flask, jsonify
 from flask_cors import CORS
 from app.api.routes import api_bp
@@ -5411,7 +5457,7 @@ def create_app(force_recreate=False):
             allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
             supports_credentials=True,
             expose_headers=["Content-Type"],
-            max_age=3600  # Add cache duration for preflight requests
+            max_age=3600
         )
         
         # Add CORS headers to all responses
@@ -5423,21 +5469,19 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
         
+        # Initialize components before registering blueprints
+        logger.info("Starting application initialization...")
+        if not check_versions():
+            logger.warning("Version mismatches detected")
+        if not check_llm_connection():
+            logger.error("LLM connection check failed")
+            
+        # Initialize app (blocking)
+        initialize_app(force_recreate)
+        logger.info("Application initialization completed")
+        
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
-        
-        # Initialize components in background thread
-        def init_background():
-            try:
-                if not check_versions():
-                    logger.warning("Version mismatches detected")
-                if not check_llm_connection():
-                    logger.error("LLM connection check failed")
-                initialize_app(force_recreate)
-            except Exception as e:
-                logger.error(f"Background initialization error: {e}")
-        
-        Thread(target=init_background, daemon=True).start()
         
         # Add basic route for root path
         @app.route('/')
@@ -5462,9 +5506,7 @@ def main():
 
     app = create_app(force_recreate=args.recreate_vector_store)
     
-    # Get port from environment variable or use default
     port = int(os.environ.get('PORT', 5001))
-    
     logger.info(f"Starting Flask server on port {port}...")
     app.run(debug=DEBUG, host='0.0.0.0', port=port)
 
@@ -6685,6 +6727,10 @@ Optional Environment Variables:
 - MAX_CHUNK_SIZE: Maximum allowed chunk size (default: 3000)
 """
 
+# File: backend/app/config/settings.py
+
+# File: backend/app/config/settings.py
+
 import os
 import logging
 from typing import Any, Dict
@@ -6692,101 +6738,127 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-
 # Load environment variables
 load_dotenv()
 
+def get_env_float(key: str, default: float) -> float:
+    """Get float from environment with fallback"""
+    try:
+        value = os.getenv(key)
+        return float(value) if value is not None else default
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid value for {key}, using default: {default}")
+        return default
+
+def get_env_int(key: str, default: int) -> int:
+    """Get integer from environment with fallback"""
+    try:
+        value = os.getenv(key)
+        return int(value) if value is not None else default
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid value for {key}, using default: {default}")
+        return default
+
+def get_env_bool(key: str, default: bool) -> bool:
+    """Get boolean from environment with fallback"""
+    value = os.getenv(key, str(default)).lower()
+    return value in ('true', '1', 't')
+
 # API Keys
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 # Application settings
-DEBUG = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "t")
+DEBUG = get_env_bool("FLASK_DEBUG", False)
 ALLOWED_ORIGIN = os.getenv('ALLOWED_ORIGIN', 'http://localhost:3000')
 
-# Vector store settings
-VECTOR_STORE_SIMILARITY_THRESHOLD = float(os.getenv('VECTOR_STORE_SIMILARITY_THRESHOLD', '0.3'))
-VECTOR_STORE_TOP_K = int(os.getenv('VECTOR_STORE_TOP_K', '8'))
+# Vector store settings - using get_env_float to handle validation
+VECTOR_STORE_SIMILARITY_THRESHOLD = max(0.0, min(1.0, get_env_float('VECTOR_STORE_SIMILARITY_THRESHOLD', 0.3)))
+VECTOR_STORE_TOP_K = get_env_int('VECTOR_STORE_TOP_K', 8)
 
 # Embedding settings
 EMBEDDING_MODEL = os.getenv('COHERE_MODEL', 'embed-multilingual-v2.0')
 
 # LLM settings
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-3-sonnet-20240229')
-LLM_TEMPERATURE = float(os.getenv('LLM_TEMPERATURE', '0.3'))
-LLM_MAX_TOKENS = int(os.getenv('LLM_MAX_TOKENS', '4096'))
+LLM_TEMPERATURE = max(0.0, min(1.0, get_env_float('LLM_TEMPERATURE', 0.3)))
+LLM_MAX_TOKENS = get_env_int('LLM_MAX_TOKENS', 4096)
 
 # Chunking settings
-CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '2000'))
-CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '200'))
+CHUNK_SIZE = get_env_int('CHUNK_SIZE', 2000)
+CHUNK_OVERLAP = get_env_int('CHUNK_OVERLAP', 200)
 
 # Retrieval settings
-RETRIEVAL_MODE = os.getenv('RETRIEVAL_MODE', 'mmr')  # 'similarity' or 'mmr'
-MMR_DIVERSITY_SCORE = float(os.getenv('MMR_DIVERSITY_SCORE', '0.3'))  # Added this line
+RETRIEVAL_MODE = os.getenv('RETRIEVAL_MODE', 'mmr')
+MMR_DIVERSITY_SCORE = max(0.0, min(1.0, get_env_float('MMR_DIVERSITY_SCORE', 0.3)))
 
 # Cache settings
-ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'True').lower() in ('true', '1', 't')
+ENABLE_CACHE = get_env_bool('ENABLE_CACHE', True)
 CACHE_DIR = os.getenv('CACHE_DIR', '.cache')
 
 # Document processing settings
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
-RETRY_DELAY = float(os.getenv('RETRY_DELAY', '1.0'))
-MIN_CHUNK_SIZE = int(os.getenv('MIN_CHUNK_SIZE', '100'))
-MAX_CHUNK_SIZE = int(os.getenv('MAX_CHUNK_SIZE', '8000'))
+MAX_RETRIES = get_env_int('MAX_RETRIES', 3)
+RETRY_DELAY = get_env_float('RETRY_DELAY', 1.0)
+MIN_CHUNK_SIZE = get_env_int('MIN_CHUNK_SIZE', 100)
+MAX_CHUNK_SIZE = get_env_int('MAX_CHUNK_SIZE', 8000)
 
 # Special settings for code chunks
-CODE_CHUNK_SIZE = int(os.getenv('CODE_CHUNK_SIZE', '11800'))  # Reduced from 12000 to allow for markers
-CODE_CHUNK_OVERLAP = int(os.getenv('CODE_CHUNK_OVERLAP', '400'))
-MIN_CODE_CHUNK_SIZE = int(os.getenv('MIN_CODE_CHUNK_SIZE', '50'))
-MAX_CODE_CHUNK_SIZE = int(os.getenv('MAX_CODE_CHUNK_SIZE', '11800'))  # Reduced to match CODE_CHUNK_SIZE
+CODE_CHUNK_SIZE = get_env_int('CODE_CHUNK_SIZE', 11800)
+CODE_CHUNK_OVERLAP = get_env_int('CODE_CHUNK_OVERLAP', 400)
+MIN_CODE_CHUNK_SIZE = get_env_int('MIN_CODE_CHUNK_SIZE', 50)
+MAX_CODE_CHUNK_SIZE = get_env_int('MAX_CODE_CHUNK_SIZE', 11800)
 
 def validate_settings() -> Dict[str, Any]:
     """Validate all settings and return current configuration"""
-    config = {
-        'api_keys': {
-            'anthropic': bool(ANTHROPIC_API_KEY),
-            'cohere': bool(COHERE_API_KEY),
-        },
-        'vector_store': {
-            'similarity_threshold': VECTOR_STORE_SIMILARITY_THRESHOLD,
-            'top_k': VECTOR_STORE_TOP_K,
-        },
-        'llm': {
-            'model': CLAUDE_MODEL,
-            'temperature': LLM_TEMPERATURE,
-            'max_tokens': LLM_MAX_TOKENS,
-        },
-        'processing': {
-            'chunk_size': CHUNK_SIZE,
-            'chunk_overlap': CHUNK_OVERLAP,
-            'min_chunk_size': MIN_CHUNK_SIZE,
-            'max_chunk_size': MAX_CHUNK_SIZE,
-        },
-        'cache': {
-            'enabled': ENABLE_CACHE,
-            'directory': CACHE_DIR,
-        }
-    }
-
-    # Validation checks
     try:
-        assert 0 <= VECTOR_STORE_SIMILARITY_THRESHOLD <= 1, "Similarity threshold must be between 0 and 1"
-        assert 0 <= LLM_TEMPERATURE <= 1, "LLM temperature must be between 0 and 1"
-        assert MIN_CHUNK_SIZE < MAX_CHUNK_SIZE, "Min chunk size must be less than max chunk size"
-        assert CHUNK_OVERLAP < CHUNK_SIZE, "Chunk overlap must be less than chunk size"
-        assert VECTOR_STORE_TOP_K > 0, "Top K must be positive"
-        assert LLM_MAX_TOKENS > 0, "Max tokens must be positive"
-        assert 0 <= MMR_DIVERSITY_SCORE <= 1, "MMR diversity score must be between 0 and 1"
-        
+        # Check required API keys
+        if not ANTHROPIC_API_KEY:
+            logger.warning("ANTHROPIC_API_KEY not set")
+        if not COHERE_API_KEY:
+            logger.warning("COHERE_API_KEY not set")
+
+        # Validate chunk sizes
+        if MIN_CHUNK_SIZE >= MAX_CHUNK_SIZE:
+            logger.warning("MIN_CHUNK_SIZE must be less than MAX_CHUNK_SIZE")
+
+        if CHUNK_OVERLAP >= CHUNK_SIZE:
+            logger.warning("CHUNK_OVERLAP must be less than CHUNK_SIZE")
+
+        # Create cache directory if enabled
         if ENABLE_CACHE:
             os.makedirs(CACHE_DIR, exist_ok=True)
-            
+
+        config = {
+            'api_keys': {
+                'anthropic': bool(ANTHROPIC_API_KEY),
+                'cohere': bool(COHERE_API_KEY),
+            },
+            'vector_store': {
+                'similarity_threshold': VECTOR_STORE_SIMILARITY_THRESHOLD,
+                'top_k': VECTOR_STORE_TOP_K,
+            },
+            'llm': {
+                'model': CLAUDE_MODEL,
+                'temperature': LLM_TEMPERATURE,
+                'max_tokens': LLM_MAX_TOKENS,
+            },
+            'processing': {
+                'chunk_size': CHUNK_SIZE,
+                'chunk_overlap': CHUNK_OVERLAP,
+                'min_chunk_size': MIN_CHUNK_SIZE,
+                'max_chunk_size': MAX_CHUNK_SIZE,
+            },
+            'cache': {
+                'enabled': ENABLE_CACHE,
+                'directory': CACHE_DIR,
+            }
+        }
+
         logger.info("Configuration validated successfully")
         return config
-        
+
     except Exception as e:
-        logger.error(f"Configuration validation failed: {str(e)}")
+        logger.error(f"Configuration validation error: {str(e)}")
         raise
 
 # Validate settings on import
