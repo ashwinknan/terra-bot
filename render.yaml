@@ -5,7 +5,7 @@ services:
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
     startCommand: >
       cd backend && gunicorn "app.main:create_app()" 
-      --timeout 120
+      --timeout 300
       --workers 2
       --threads 4
       --worker-class gthread
@@ -14,7 +14,8 @@ services:
       --backlog 100
       --log-level info
       --bind 0.0.0.0:$PORT
-      --preload
+      --keep-alive 5
+      --graceful-timeout 30
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
