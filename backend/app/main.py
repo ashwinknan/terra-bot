@@ -28,6 +28,17 @@ def create_app(force_recreate=False):
             expose_headers=["Content-Type"],
             max_age=3600
         )
+
+        # Configure gunicorn settings via app config
+        app.config.update({
+            'worker_class': 'gthread',
+            'workers': 2,
+            'threads': 4,
+            'timeout': 300,
+            'keepalive': 5,
+            'max_requests': 1000,
+            'max_requests_jitter': 50
+        })
         
         # Add CORS headers to all responses
         @app.after_request
@@ -37,30 +48,15 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Credentials', 'true')
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
-        
+
         # Initialize components before registering blueprints
         logger.info("Starting application initialization...")
-        if not check_versions():
-            logger.warning("Version mismatches detected")
-        if not check_llm_connection():
-            logger.error("LLM connection check failed")
-            
-        # Initialize app (blocking)
         initialize_app(force_recreate)
         logger.info("Application initialization completed")
         
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
         
-        # Add basic route for root path
-        @app.route('/')
-        def root():
-            return jsonify({
-                "status": "healthy",
-                "message": "RAG Game Assistant API"
-            })
-        
-        logger.info("Application creation completed successfully")
         return app
         
     except Exception as e:

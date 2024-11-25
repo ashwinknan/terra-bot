@@ -101,7 +101,7 @@ class QAChainManager:
             raise
 
     def process_query(self, chain: Any, query: str) -> Dict[str, Any]:
-        """Process a query using appropriate chain with timeout"""
+        """Process a query using appropriate chain"""
         try:
             if not query or not isinstance(query, str) or not query.strip():
                 return {
@@ -114,31 +114,21 @@ class QAChainManager:
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
 
-            # Select chain based on query type
+            # Select chain based on query type and get response
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
-
-            try:
-                # Submit query processing to thread pool with timeout
-                future = self.executor.submit(self._process_query_internal, selected_chain, query)
-                response = future.result(timeout=60)  # 60 second timeout
-                
-                return response
-
-            except TimeoutError:
-                logger.error("Query processing timed out")
-                return {
-                    "answer": "The request timed out. Please try a shorter or simpler question.",
-                    "sources": [],
-                    "chat_history": self.get_chat_history()
-                }
-            except Exception as e:
-                logger.error(f"Chain error: {str(e)}")
-                return {
-                    "answer": f"Error processing query: {str(e)}",
-                    "sources": [],
-                    "chat_history": self.get_chat_history()
-                }
+            response = selected_chain.invoke({"question": query})
+            
+            # Store in memory if string response
+            if isinstance(response, str):
+                self.memory.chat_memory.add_user_message(query)
+                self.memory.chat_memory.add_ai_message(response)
+            
+            return {
+                "answer": response,
+                "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+                "chat_history": self.get_chat_history()
+            }
 
         except Exception as e:
             logger.error(f"Error in process_query: {str(e)}", exc_info=True)
