@@ -1,14 +1,24 @@
 import os
 import sys
+from pathlib import Path
+
+# Add the backend directory to Python path
+current_dir = Path(__file__).parent.resolve()
+backend_path = current_dir / "backend"
+sys.path.insert(0, str(backend_path))
+
 import subprocess
 import time
 import requests
 import signal
 import yaml
-from pathlib import Path
 from dotenv import load_dotenv
 from threading import Thread
 import logging
+
+# Now import app-related modules after path is set
+from app.core.initializer import AppComponents
+from app.main import create_app
 
 # Configure logging
 logging.basicConfig(
@@ -22,7 +32,7 @@ def print_section(title):
 
 def load_env_file():
     """Load environment variables from .env file"""
-    env_path = Path("backend") / ".env"
+    env_path = backend_path / ".env"
     if env_path.exists():
         load_dotenv(env_path)
         logger.info(f"✓ Loaded environment variables from {env_path}")
@@ -55,24 +65,17 @@ def test_installation():
     
     # First test pip itself
     success, output = run_command("pip --version")
-    if not success:
-        logger.error("pip is not installed or not working")
-        return False
+    assert success, "pip is not installed or not working"
         
     # Test requirements installation
-    success, output = run_command("pip install -r requirements.txt", cwd="backend")
-    if not success:
-        logger.error(f"Installation failed: {output}")
-        return False
+    success, output = run_command("pip install -r requirements.txt", cwd=str(backend_path))
+    assert success, f"Installation failed: {output}"
         
     # Check for dependency conflicts
-    success, output = run_command("pip check", cwd="backend")
-    if not success:
-        logger.error(f"Dependency conflicts found: {output}")
-        return False
+    success, output = run_command("pip check", cwd=str(backend_path))
+    assert success, f"Dependency conflicts found: {output}"
         
     logger.info("✓ Package installation and dependency check successful")
-    return True
 
 def test_imports():
     """Test if all required packages can be imported"""
@@ -93,22 +96,15 @@ def test_imports():
         except ImportError as e:
             failed_imports.append(f"{package}: {str(e)}")
     
-    if failed_imports:
-        for failure in failed_imports:
-            logger.error(f"Import failed: {failure}")
-        return False
-        
+    assert not failed_imports, "\n".join(failed_imports)
     logger.info("✓ All required packages imported successfully")
-    return True
 
 def test_render_yaml():
     """Validate render.yaml configuration"""
     print_section("Testing Render Configuration")
-    render_yaml_path = Path("render.yaml")
+    render_yaml_path = current_dir / "render.yaml"
     
-    if not render_yaml_path.exists():
-        logger.error("render.yaml not found")
-        return False
+    assert render_yaml_path.exists(), "render.yaml not found"
     
     try:
         with open(render_yaml_path) as f:
@@ -117,36 +113,27 @@ def test_render_yaml():
         # Validate required fields
         required_fields = ['services']
         for field in required_fields:
-            if field not in config:
-                logger.error(f"Missing required field in render.yaml: {field}")
-                return False
+            assert field in config, f"Missing required field in render.yaml: {field}"
         
         # Validate service configuration
         service = config['services'][0]
         required_service_fields = ['type', 'name', 'env', 'buildCommand', 'startCommand']
         for field in required_service_fields:
-            if field not in service:
-                logger.error(f"Missing required service field: {field}")
-                return False
+            assert field in service, f"Missing required service field: {field}"
         
         # Validate environment variables
         if 'envVars' in service:
             required_env_vars = ['ANTHROPIC_API_KEY', 'COHERE_API_KEY']
             defined_vars = [env['key'] for env in service['envVars']]
             for var in required_env_vars:
-                if var not in defined_vars:
-                    logger.error(f"Missing required environment variable in render.yaml: {var}")
-                    return False
+                assert var in defined_vars, f"Missing required environment variable in render.yaml: {var}"
         
         logger.info("✓ render.yaml is valid")
-        return True
         
     except yaml.YAMLError as e:
-        logger.error(f"Error parsing render.yaml: {str(e)}")
-        return False
+        assert False, f"Error parsing render.yaml: {str(e)}"
     except Exception as e:
-        logger.error(f"Error validating render.yaml: {str(e)}")
-        return False
+        assert False, f"Error validating render.yaml: {str(e)}"
 
 def test_gunicorn():
     """Test if gunicorn can start the app"""
@@ -156,129 +143,130 @@ def test_gunicorn():
     try:
         # Ensure port is free
         try:
-            subprocess.run(["lsof", "-ti:5001"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            subprocess.run(["pkill", "-f", "gunicorn"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            time.sleep(1)
+            for cmd in ["lsof -ti:5001", "pkill -f gunicorn", "pkill -f flask"]:
+                subprocess.run(cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            time.sleep(3)  # Give more time for cleanup
         except:
             pass
 
         # Create test config
-        backend_path = str(Path("backend").absolute())
         config_content = f"""
 import multiprocessing
 import sys
+import os
 
-sys.path.insert(0, "{backend_path}")
+# Add backend path
+sys.path.insert(0, "{str(backend_path)}")
 
-bind = "0.0.0.0:5001"
+# Server config
+bind = "127.0.0.1:5001"  # Changed to localhost explicitly
 workers = 1
-threads = 4
-worker_class = "gthread"
+threads = 1
+worker_class = "sync"
 timeout = 120
 keepalive = 2
 max_requests = 0
 proc_name = "rag-game-assistant"
-preload_app = True
+preload_app = False  # Changed to False to prevent double initialization
+reload = False
+daemon = False
+accesslog = "-"  # Log to stdout
+errorlog = "-"   # Log to stderr
+loglevel = "debug"
 
 def when_ready(server):
     print("Gunicorn server is ready!")
 """
-        config_path = Path("backend") / "gunicorn_config.py"
+        config_path = backend_path / "gunicorn_config.py"
         config_path.write_text(config_content)
         
         logger.info("Starting gunicorn...")
         
+        # Start gunicorn with proper env vars
         env = os.environ.copy()
-        env["PYTHONPATH"] = backend_path
-        env["GUNICORN_CMD_ARGS"] = "--preload"
+        env["PYTHONPATH"] = str(backend_path)
+        env["ENV"] = "test"
         
+        # Start server with initialization logging
         process = subprocess.Popen(
-            ["gunicorn", "--config", "gunicorn_config.py", "wsgi:app"],
-            cwd=backend_path,
+            ["gunicorn", "--config", str(config_path), "wsgi:app"],
+            cwd=str(backend_path),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
             text=True,
-            bufsize=1
+            bufsize=1,
+            universal_newlines=True
         )
         
-        def print_output():
-            while True:
-                if process.poll() is not None:
-                    break
-                output = process.stdout.readline()
-                if output:
-                    logger.info(f"Server output: {output.strip()}")
-                error = process.stderr.readline()
-                if error:
-                    logger.error(f"Server error: {error.strip()}")
-
-        output_thread = Thread(target=print_output, daemon=True)
-        output_thread.start()
-
-        logger.info("Waiting for server to start...")
-        time.sleep(10)
-        
-        success = False
+        # Monitor server output for readiness
+        ready = False
         start_time = time.time()
-        timeout = 60
+        timeout = 30  # 30 seconds timeout
         
-        while time.time() - start_time < timeout:
-            try:
-                logger.info("Attempting to connect to server...")
-                response = requests.get("http://localhost:5001/api/", timeout=5)
-                
-                if response.status_code == 200:
-                    logger.info(f"✓ Server responded successfully with status {response.status_code}")
-                    logger.info(f"Response: {response.json()}")
-                    success = True
+        while time.time() - start_time < timeout and not ready:
+            output = process.stdout.readline()
+            if output:
+                logger.info(f"Server output: {output.strip()}")
+                if "Listening at: http://127.0.0.1:5001" in output:
+                    ready = True
                     break
-                else:
-                    logger.error(f"Server returned status {response.status_code}")
+            
+            error = process.stderr.readline()
+            if error:
+                logger.error(f"Server error: {error.strip()}")
+            
+            if process.poll() is not None:
+                # Server process ended
+                out, err = process.communicate()
+                if out:
+                    logger.error(f"Final output: {out}")
+                if err:
+                    logger.error(f"Final error: {err}")
+                raise RuntimeError("Server failed to start")
                 
-            except requests.ConnectionError as e:
-                logger.warning(f"Connection failed, retrying... ({str(e)})")
+            time.sleep(0.1)
+            
+        if not ready:
+            raise TimeoutError("Server failed to start within timeout")
+        
+        # Test server
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.get("http://127.0.0.1:5001/api/", timeout=5)
+                assert response.status_code == 200
+                logger.info(f"Server is up! Response: {response.json()}")
+                return
             except Exception as e:
-                logger.error(f"Error during connection attempt: {str(e)}")
-            
-            time.sleep(2)
-            
-        if not success:
-            logger.error("Server failed to respond within timeout period")
-            return False
+                last_error = e
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                raise RuntimeError(f"Failed to connect to server after {max_retries} attempts") from last_error
                 
-        return success
-
     except Exception as e:
-        logger.error(f"Error starting server: {e}")
-        return False
+        logger.error(f"Gunicorn test failed: {str(e)}")
+        if process:
+            out, err = process.communicate()
+            if out:
+                logger.error(f"Process output: {out}")
+            if err:
+                logger.error(f"Process error: {err}")
+        raise
         
     finally:
+        if process:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        
         try:
-            if process and process.poll() is None:
-                logger.info("Stopping gunicorn...")
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    logger.warning("Force killing process...")
-                    process.kill()
-                    try:
-                        process.wait(timeout=5)
-                    except:
-                        pass
-        except Exception as e:
-            logger.error(f"Error stopping gunicorn: {e}")
-            
-        try:
-            subprocess.run(["pkill", "-f", "gunicorn"], 
-                         stdout=subprocess.PIPE, 
-                         stderr=subprocess.PIPE)
-        except:
-            pass
-            
-        try:
-            config_path = Path("backend") / "gunicorn_config.py"
             if config_path.exists():
                 config_path.unlink()
                 logger.info("Removed config file")
@@ -289,45 +277,64 @@ def test_api_endpoints():
     """Test critical API endpoints"""
     print_section("Testing API Endpoints")
     
-    endpoints = [
-        {
-            "url": "http://localhost:5001/api/",
-            "method": "GET",
-            "expected_status": 200
-        },
-        {
-            "url": "http://localhost:5001/api/ask",
-            "method": "POST",
-            "data": {"question": "What is T#?"},
-            "expected_status": 200
-        }
-    ]
-    
-    for endpoint in endpoints:
-        try:
-            if endpoint["method"] == "GET":
-                response = requests.get(endpoint["url"], timeout=5)
-            else:
-                response = requests.post(endpoint["url"], json=endpoint["data"], timeout=30)
-                
-            if response.status_code == endpoint["expected_status"]:
-                logger.info(f"✓ {endpoint['url']} - Status: {response.status_code}")
-            else:
-                logger.error(f"✗ {endpoint['url']} - Expected: {endpoint['expected_status']}, Got: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error testing {endpoint['url']}: {str(e)}")
-            return False
+    try:
+        # Initialize app with QA chain
+        app = create_app(force_recreate=True)  # Force recreate to ensure initialization
+        
+        # Wait for initialization
+        max_wait = 30
+        start = time.time()
+        while time.time() - start < max_wait:
+            try:
+                if (hasattr(AppComponents, 'qa_chain_manager') and 
+                    AppComponents.qa_chain_manager is not None and
+                    hasattr(AppComponents, 'qa_chain') and
+                    AppComponents.qa_chain is not None):
+                    break
+                time.sleep(1)
+            except Exception:
+                time.sleep(1)
+        
+        if not (AppComponents.qa_chain_manager and AppComponents.qa_chain):
+            raise TimeoutError("QA chain failed to initialize")
             
-    return True
+        with app.test_client() as client:
+            # Test health check first
+            response = client.get('/api/')
+            assert response.status_code == 200
+            logger.info("✓ /api/ - Status: 200")
+            
+            # Test QA endpoint
+            response = client.post(
+                '/api/ask',
+                json={"question": "What is T#?"},
+                content_type='application/json'
+            )
+            
+            assert response.status_code == 200, \
+                f"QA endpoint returned {response.status_code}: {response.get_json()}"
+            logger.info("✓ /api/ask - Status: 200")
+            
+            # Verify response format
+            data = response.get_json()
+            assert 'answer' in data
+            assert 'sources' in data
+            assert len(data['answer']) > 0
+            
+    except Exception as e:
+        logger.error(f"API endpoints test failed: {str(e)}")
+        raise
+    finally:
+        # Cleanup
+        try:
+            if hasattr(AppComponents, 'vector_store_manager'):
+                AppComponents.vector_store_manager.cleanup_all()
+        except Exception as e:
+            logger.warning(f"Cleanup warning: {e}")
 
 def main():
     """Run all deployment tests"""
     logger.info("Starting deployment tests...")
-    
-    if not load_env_file():
-        return False
     
     tests = [
         ("Installation", test_installation),
@@ -340,31 +347,12 @@ def main():
     results = []
     for test_name, test_func in tests:
         try:
-            logger.info(f"\nRunning {test_name} test...")
-            result = test_func()
-            results.append(result)
-            if not result:
-                logger.error(f"✗ {test_name} test failed")
-            else:
-                logger.info(f"✓ {test_name} test passed")
+            test_func()
+            results.append(True)
+            logger.info(f"✓ {test_name} test passed")
         except Exception as e:
-            logger.error(f"✗ {test_name} test failed with error: {str(e)}")
+            logger.error(f"✗ {test_name} test failed: {str(e)}")
             results.append(False)
-    
-    # Print summary
-    logger.info("\n" + "="*50)
-    logger.info("Deployment Test Summary")
-    logger.info("="*50)
-    logger.info(f"Total Tests: {len(tests)}")
-    logger.info(f"Passed: {sum(results)}")
-    logger.info(f"Failed: {len(results) - sum(results)}")
-    
-    # List failed tests
-    if not all(results):
-        logger.info("\nFailed Tests:")
-        for (test_name, _), result in zip(tests, results):
-            if not result:
-                logger.info(f"- {test_name}")
     
     return all(results)
 
@@ -378,3 +366,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Critical error: {str(e)}")
         sys.exit(1)
+        

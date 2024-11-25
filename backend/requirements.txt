@@ -142,7 +142,7 @@ uvloop==0.21.0
 watchfiles==0.24.0
 websocket-client==1.8.0
 websockets==13.1
-Werkzeug==3.1.1
+Werkzeug==2.3.7
 wrapt==1.16.0
 yarl==1.17.1
 zipp==3.20.2

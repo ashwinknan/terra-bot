@@ -1,13 +1,23 @@
-# app/api/routes.py
-
 from flask import Blueprint, request, jsonify
 import logging
 from app.core.initializer import AppComponents
+from app.config.settings import ALLOWED_ORIGIN
+import re
 
 logger = logging.getLogger(__name__)
 
 # Create blueprint with unique name
 api_bp = Blueprint('api', __name__, url_prefix='/api')
+
+def is_valid_question(question: str) -> bool:
+    """Validate question content"""
+    # Check if question has actual words (not just special characters or numbers)
+    if not re.search(r'[a-zA-Z]+', question):
+        return False
+    # Check if question is not too long (prevent abuse)
+    if len(question) > 1000:
+        return False
+    return True
 
 @api_bp.route('/', methods=['GET'])
 def health_check():
@@ -44,44 +54,71 @@ def health_check():
 def ask_question():
     """Handle question answering"""
     try:
-        data = request.json
-        if not data:
+        # Check if request has JSON content type
+        if not request.is_json:
             return jsonify({"error": "No JSON data provided"}), 400
             
-        question = data.get('question', '').strip()
+        try:
+            data = request.get_json()
+        except Exception:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        if not data or not isinstance(data, dict):
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        if 'question' not in data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        question = data.get('question')
+        
+        # Type validation
+        if not isinstance(question, str):
+            return jsonify({"error": "Question must be a string"}), 422
+            
+        # Content validation
+        question = question.strip()
         if not question:
             return jsonify({"error": "Question cannot be empty"}), 400
             
+        # Validate question content
+        if not is_valid_question(question):
+            return jsonify({"error": "Invalid question format"}), 422
+            
         logger.info(f"Received question: {question}")
         
-        if AppComponents.qa_chain is None:
+        if not AppComponents.qa_chain or not AppComponents.qa_chain_manager:
             logger.error("QA chain is not initialized")
-            return jsonify({"error": "Service not ready. Please try again later."}), 503
+            return jsonify({
+                "error": "Service not ready. Please try again later.",
+                "status": "error"
+            }), 503
         
-        result = AppComponents.qa_chain_manager.process_query(AppComponents.qa_chain, question)
-        
-        # Add logging for debugging
-        logger.info(f"QA Chain result: {result}")
+        result = AppComponents.qa_chain_manager.process_query(
+            AppComponents.qa_chain, 
+            question
+        )
         
         response = {
             "answer": result.get("answer", "No answer generated"),
-            "sources": [doc.metadata.get('source', 'Unknown') for doc in result.get('source_documents', [])],
+            "sources": result.get("sources", []),
+            "status": "success"
         }
         
-        logger.info(f"Generated answer: {response['answer']}")
         return jsonify(response)
         
     except Exception as e:
         logger.error(f"Error processing question: {str(e)}", exc_info=True)
         return jsonify({
             "error": str(e),
-            "answer": "An error occurred while processing your question.",
+            "status": "error"
         }), 500
 
 @api_bp.route('/ask', methods=['OPTIONS'])
 def handle_ask_options():
     """Handle CORS preflight for ask endpoint"""
     response = jsonify({'message': 'OK'})
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-    response.headers.add('Access-Control-Allow-Methods', 'POST')
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    response.headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response

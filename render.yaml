@@ -1,13 +1,16 @@
 services:
   - type: web
-    name: rag-game-assistant-backend
+    name: rag-game-assistant
     env: python
+    region: oregon  # Choose your preferred region
+    plan: starter  # Adjust based on your needs
     buildCommand: |
+      python -m pip install --upgrade pip
       cd backend
-      pip install --upgrade pip
       pip install -r requirements.txt
+      python deployment_test.py
     startCommand: >
-      cd backend && gunicorn "app.main:create_app()" 
+      cd backend && gunicorn app.main:create_app() 
       --timeout 180 
       --workers 2 
       --threads 4 
@@ -25,11 +28,11 @@ services:
       - key: CACHE_DIR
         value: /opt/render/project/src/backend/.cache
       - key: ANTHROPIC_API_KEY
-        sync: false
+        sync: false  # Mark as secret
       - key: COHERE_API_KEY
-        sync: false
+        sync: false  # Mark as secret
       - key: ALLOWED_ORIGIN
-        sync: false
+        sync: false  # Configure in Render dashboard
       - key: MAX_CHUNK_SIZE
         value: 4500
       - key: CHUNK_SIZE
@@ -37,8 +40,25 @@ services:
       - key: CHUNK_OVERLAP
         value: 200
     healthCheckPath: /api/
-    autoDeploy: true
+    autoDeploy: false  # Set to false for controlled deployments
     disk:
       name: cache
       mountPath: /opt/render/project/src/backend/.cache
       sizeGB: 1
+
+  - type: web
+    name: rag-game-assistant-frontend
+    env: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/build
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        value: https://rag-game-assistant.onrender.com # Change to your backend URL
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

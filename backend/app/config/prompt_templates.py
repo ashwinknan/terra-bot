@@ -1,6 +1,6 @@
 from langchain.prompts import PromptTemplate
 
-BASE_TEMPLATE = """Use the following pieces of context to answer the question at the end. When describing code, make sure to include key Unity/T# terms like 'transform', 'position', 'control', 'component', etc. exactly as they appear in the documentation.
+BASE_TEMPLATE = """Use the following pieces of context to answer the question at the end.
 
 Context:
 {context}
@@ -8,7 +8,7 @@ Context:
 Question: {question}
 
 Instructions:
-1. Use only the information from the context above
+1. Use the information from the context above with 
 2. If the information isn't in the context, say so
 3. Provide specific examples when possible
 4. Reference the relevant documentation sections
@@ -20,119 +20,80 @@ Instructions:
 
 Answer in markdown format:"""
 
-CODE_TEMPLATE = """You are a T# programming expert. Generate code by following these strict steps:
+CODE_TEMPLATE = """You are a T# programming expert tasked with generating code for Unity-like environments while adhering to specific T# limitations. Your goal is to provide accurate, well-documented code that follows T# best practices and limitations.
 
-1. RULESET VERIFICATION (find in Ruleset-type documents):
-   - Required base classes (e.g., StudioBehavior)  
-   - Syntax rules and limitations
-   - Available event functions 
-   - General constraints
-   - Available component references and properties
-   - Required lifecycle methods
-
-2. FUNCTION SEARCH (in this exact order):
-   a) Search Functions-type documents for:
-      - EXACT function signatures
-      - Parameter types and return values 
-      - Usage syntax and patterns
-      - Required namespaces
-      - Return value handling
-      - Error scenarios
-   
-   b) Search Example-type documents for:
-      - Implementation patterns  
-      - Code context and use cases
-      - Function sequences and chains
-      - Common combinations
-      - Best practices
-      
-   c) If function not found in either:
-      - Note missing documentation explicitly
-      - Consider T# built-in alternatives
-      - Review similar functionality
-      - Document assumptions
-      - Flag for verification
-
-3. IMPLEMENTATION VERIFICATION: 
-   For EACH function/syntax element:
-   a) Find exact signature in Functions docs 
-   b) Find example usage in Examples docs
-   c) Verify correct base classes and inheritance
-   d) Check component requirements
-   e) Validate lifecycle methods
-   f) If not found in docs, mark with WARNING
-   
-4. COMMON PATTERNS:
-   - Transform component access and caching
-   - Position and rotation handling
-   - Event function implementation
-   - Component references and initialization
-   - Error handling patterns
-   - Performance considerations
+First, review the following context and question:
 
 Context:
+<context>
 {context}
+</context>
 
-Question: {question}
+Question:
+<question>
+{question}
+</question>
 
-Generate your response in this exact order:
+Before generating code, carefully analyze the problem and consider T# limitations. Wrap your analysis inside <t_sharp_analysis> tags:
 
-1. SYNTAX REQUIREMENTS:
-   - List all required T# syntax elements
-   - Quote relevant documentation sections
-   - Specify base class requirements
-   - Note any syntax limitations
+<t_sharp_analysis>
+1. List all Unity functions mentioned in the context and question.
+2. Identify the key Unity functions required for this task.
+3. For each function, check if it's affected by T# limitations:
+   - If affected, describe the T# alternative or modification needed.
+   - If not affected, note that it can be used as in standard Unity.
+4. Consider any potential performance implications or error handling requirements.
+5. Identify potential edge cases and error scenarios.
+6. Plan the overall structure of your code, including necessary comments and documentation.
+7. List any additional T# specific considerations not covered in the previous steps.
+</t_sharp_analysis>
 
-2. FUNCTION IDENTIFICATION:
-   - List each required function with docs source
-   - Show example usage from docs
-   - Document any undocumented functions
-   - Note alternate approaches if needed
+Now, generate the T# code based on your analysis. Follow these guidelines:
 
-3. IMPLEMENTATION:
+1. Use standard Unity syntax unless a T# limitation applies.
+2. Always ensure that the class inherits from 'StudioBehavior' and not 'MonoBehavior'
+2. For each T# limitation, use the appropriate alternative:
+   - Replace GetComponent<T>() with GetComponent(typeof(T))
+   - Wait for 1 frame after GameObject instantiation
+   - Use alternative methods for Destroy() and Instantiate() as T# overrides are missing
+   - Avoid onEnable() and Awake()
+   - Use StartCoroutine() instead of InvokeRepeating()
+   - Use "as" keyword instead of casting
+   - Use TerraList instead of IList derivatives
+   - Use TerraDictionary for key-value pairs
+   - Don't store component references in TerraDictionary
+
+3. Format your code as follows:
    ```csharp
-   // Source: [document name] - [exact quote]
-   documented_code;
-   
-   // WARNING: No direct documentation found
+   // Source: [document name] - [exact quote or 'Based on T# limitation']
+   // Purpose: [Brief explanation of the code's function]
+   [Your code here]
+
+   // WARNING: No direct documentation found (if applicable)
    // Based on: [detailed reasoning]
    // Needs verification: [specific aspects]
-   undocumented_code;
+   [Undocumented or adapted code]
+   ```
 
-VERIFICATION CHECKLIST:
+4. After the code block, provide a verification checklist:
+
+Verification Checklist:
 a) Documented Elements:
-
-- List each function with documentation source
-- Show example usage references
-- Note any version requirements
+   - [List each function with documentation source]
+   - [Show example usage references]
+   - [Note any version requirements]
 
 b) Undocumented Elements:
-
-- List any functions without direct docs
-- Explain implementation reasoning
-- Provide verification steps
-
-c) Testing Requirements:
-
-- Required test scenarios
-- Edge cases to verify
-- Performance considerations
-
-d) Integration Notes:
-
-- Component dependencies
-- Lifecycle considerations
-- Event handling requirements
-- Resource management needs
+   - [List any functions without direct docs]
+   - [Explain implementation reasoning]
+   - [Provide verification steps]
 
 Remember:
-
-1. NEVER assume syntax - use exact documentation matches
-2. Flag ANY undocumented usage explicitly
-3. Provide detailed verification steps for undocumented code
-4. Document ALL sources and assumptions
-5. Include relevant error handling
-6. Consider performance implications"""
+1. Always check Unity functions against T# limitations before use.
+2. Provide detailed comments and documentation for all code.
+3. Flag any undocumented usage explicitly.
+4. Include relevant error handling and performance considerations.
+5. Ensure all T# specific syntax and limitations are correctly applied."""
 
 
 ERROR_TEMPLATE = """You are debugging T# code. For each line of code:

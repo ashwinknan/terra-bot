@@ -22,9 +22,22 @@ def create_app(force_recreate=False):
         
         # Configure CORS with settings from config
         CORS(app, 
-             origins=[ALLOWED_ORIGIN],
-             allow_headers=["Content-Type"],
-             methods=["GET", "POST", "OPTIONS"])
+            origins=[ALLOWED_ORIGIN],
+            methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+            supports_credentials=True,
+            expose_headers=["Content-Type"],
+            max_age=3600  # Add cache duration for preflight requests
+        )
+        
+        # Add CORS headers to all responses
+        @app.after_request
+        def after_request(response):
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+            response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+            response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
+            return response
         
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
