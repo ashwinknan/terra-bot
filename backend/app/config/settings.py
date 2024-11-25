@@ -27,6 +27,8 @@ Optional Environment Variables:
 
 # File: backend/app/config/settings.py
 
+# File: backend/app/config/settings.py
+
 import os
 import logging
 from typing import Any, Dict
@@ -68,8 +70,8 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 DEBUG = get_env_bool("FLASK_DEBUG", False)
 ALLOWED_ORIGIN = os.getenv('ALLOWED_ORIGIN', 'http://localhost:3000')
 
-# Vector store settings
-VECTOR_STORE_SIMILARITY_THRESHOLD = get_env_float('VECTOR_STORE_SIMILARITY_THRESHOLD', 0.3)
+# Vector store settings - using get_env_float to handle validation
+VECTOR_STORE_SIMILARITY_THRESHOLD = max(0.0, min(1.0, get_env_float('VECTOR_STORE_SIMILARITY_THRESHOLD', 0.3)))
 VECTOR_STORE_TOP_K = get_env_int('VECTOR_STORE_TOP_K', 8)
 
 # Embedding settings
@@ -77,7 +79,7 @@ EMBEDDING_MODEL = os.getenv('COHERE_MODEL', 'embed-multilingual-v2.0')
 
 # LLM settings
 CLAUDE_MODEL = os.getenv('CLAUDE_MODEL', 'claude-3-sonnet-20240229')
-LLM_TEMPERATURE = get_env_float('LLM_TEMPERATURE', 0.3)
+LLM_TEMPERATURE = max(0.0, min(1.0, get_env_float('LLM_TEMPERATURE', 0.3)))
 LLM_MAX_TOKENS = get_env_int('LLM_MAX_TOKENS', 4096)
 
 # Chunking settings
@@ -86,7 +88,7 @@ CHUNK_OVERLAP = get_env_int('CHUNK_OVERLAP', 200)
 
 # Retrieval settings
 RETRIEVAL_MODE = os.getenv('RETRIEVAL_MODE', 'mmr')
-MMR_DIVERSITY_SCORE = get_env_float('MMR_DIVERSITY_SCORE', 0.3)
+MMR_DIVERSITY_SCORE = max(0.0, min(1.0, get_env_float('MMR_DIVERSITY_SCORE', 0.3)))
 
 # Cache settings
 ENABLE_CACHE = get_env_bool('ENABLE_CACHE', True)
@@ -113,32 +115,12 @@ def validate_settings() -> Dict[str, Any]:
         if not COHERE_API_KEY:
             logger.warning("COHERE_API_KEY not set")
 
-        # Validate numerical ranges
-        if not (0 <= VECTOR_STORE_SIMILARITY_THRESHOLD <= 1):
-            logger.warning(f"Invalid VECTOR_STORE_SIMILARITY_THRESHOLD: {VECTOR_STORE_SIMILARITY_THRESHOLD}, using default: 0.3")
-            global VECTOR_STORE_SIMILARITY_THRESHOLD
-            VECTOR_STORE_SIMILARITY_THRESHOLD = 0.3
-
-        if not (0 <= LLM_TEMPERATURE <= 1):
-            logger.warning(f"Invalid LLM_TEMPERATURE: {LLM_TEMPERATURE}, using default: 0.3")
-            global LLM_TEMPERATURE
-            LLM_TEMPERATURE = 0.3
-
-        if not (0 <= MMR_DIVERSITY_SCORE <= 1):
-            logger.warning(f"Invalid MMR_DIVERSITY_SCORE: {MMR_DIVERSITY_SCORE}, using default: 0.3")
-            global MMR_DIVERSITY_SCORE
-            MMR_DIVERSITY_SCORE = 0.3
-
         # Validate chunk sizes
         if MIN_CHUNK_SIZE >= MAX_CHUNK_SIZE:
             logger.warning("MIN_CHUNK_SIZE must be less than MAX_CHUNK_SIZE")
-            global MIN_CHUNK_SIZE
-            MIN_CHUNK_SIZE = min(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE - 1)
 
         if CHUNK_OVERLAP >= CHUNK_SIZE:
             logger.warning("CHUNK_OVERLAP must be less than CHUNK_SIZE")
-            global CHUNK_OVERLAP
-            CHUNK_OVERLAP = min(CHUNK_OVERLAP, CHUNK_SIZE - 1)
 
         # Create cache directory if enabled
         if ENABLE_CACHE:
