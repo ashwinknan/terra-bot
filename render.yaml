@@ -39,6 +39,16 @@ services:
         value: 2000
       - key: CHUNK_OVERLAP
         value: 200
+      - key: VECTOR_STORE_SIMILARITY_THRESHOLD
+        value: 0.3
+      - key: VECTOR_STORE_TOP_K
+        value: 8
+      - key: LLM_TEMPERATURE
+        value: 0.3
+      - key: LLM_MAX_TOKENS
+        value: 4096
+      - key: MMR_DIVERSITY_SCORE
+        value: 0.3
     healthCheckPath: /api/
     autoDeploy: false  # Set to false for controlled deployments
     disk:
