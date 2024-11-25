@@ -1,45 +1,41 @@
 # backend/gunicorn_config.py
-
 import multiprocessing
 import os
 
-# Bind to PORT provided by Render
+# Basic config
 bind = f"0.0.0.0:{os.getenv('PORT', '5001')}"
+worker_class = 'gthread'
+workers = 1
+threads = 4
 
-# Worker configuration
-worker_class = 'gthread'  # Use threads
-workers = 2  # Number of worker processes
-threads = 4  # Threads per worker
-timeout = 300  # Worker timeout in seconds
-
-# Request handling
-max_requests = 1000
-max_requests_jitter = 50
-backlog = 100
+# Timeouts and limits
+timeout = 120
 keepalive = 5
+max_requests = 100
+max_requests_jitter = 20
 graceful_timeout = 30
+
+# Performance optimizations
+worker_tmp_dir = "/dev/shm"
+preload_app = True
+daemon = False
 
 # Logging
 accesslog = '-'
 errorlog = '-'
-loglevel = 'info'
+loglevel = 'debug'
 
-# SSL Configuration (if needed)
-keyfile = None
-certfile = None
+# Process naming
+proc_name = 'rag-game-assistant'
 
-def on_starting(server):
-    """Run when server starts"""
-    print("Gunicorn server is starting")
+def post_fork(server, worker):
+    """Setup after worker fork"""
+    server.log.info(f"Worker spawned (pid: {worker.pid})")
 
-def on_exit(server):
-    """Run when server exits"""
-    print("Gunicorn server is shutting down")
+def worker_int(worker):
+    """Worker shutdown on SIGINT"""
+    worker.log.info(f"Worker shutting down: {worker.pid}")
 
-def post_worker_init(worker):
-    """Run after worker process is initialized"""
-    print(f"Initializing worker {worker.pid}")
-
-def worker_exit(server, worker):
-    """Run when a worker exits"""
-    print(f"Worker {worker.pid} exited")
+def worker_abort(worker):
+    """Worker shutdown on SIGABRT"""
+    worker.log.info(f"Worker aborting: {worker.pid}")

@@ -106,6 +106,12 @@ CODE_CHUNK_OVERLAP = get_env_int('CODE_CHUNK_OVERLAP', 400)
 MIN_CODE_CHUNK_SIZE = get_env_int('MIN_CODE_CHUNK_SIZE', 50)
 MAX_CODE_CHUNK_SIZE = get_env_int('MAX_CODE_CHUNK_SIZE', 11800)
 
+# Add these to backend/app/config/settings.py
+EMBEDDING_BATCH_SIZE = 10  # Reduced from 50
+EMBEDDING_MAX_RETRIES = 3
+EMBEDDING_TIMEOUT = 30
+EMBEDDING_CONCURRENCY = 2
+
 def validate_settings() -> Dict[str, Any]:
     """Validate all settings and return current configuration"""
     try:

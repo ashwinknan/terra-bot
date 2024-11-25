@@ -31,8 +31,9 @@ class VectorStoreManager:
     _instances = {}
     _temp_dirs = set()
     COLLECTION_NAME = "game_development_docs"
-    BATCH_SIZE = 50
     BATCH_DELAY = 2
+    BATCH_SIZE = 10  # Reduced from 50
+    EMBEDDING_DELAY = 1  # Reduced from 2
 
     @classmethod
     def reset_instances(cls):
@@ -187,48 +188,50 @@ class VectorStoreManager:
             raise
 
     def create_vector_store(self, documents: List[Document]) -> Chroma:
-        """Create a new vector store with batched processing"""
+        """Create a new vector store with optimized batched processing"""
         try:
             if not documents:
                 logger.warning("No documents provided to create vector store")
                 raise ValueError("Cannot create vector store with empty document list")
 
-            # Reset the client to clear any existing collections
+            # Reset the client
             self.chroma_client.reset()
             
             logger.info(f"Creating new vector store with {len(documents)} documents")
             
-            # Create new Chroma vector store
-            vector_store = None
-            for i in range(0, len(documents), self.BATCH_SIZE):
-                batch = documents[i:i + self.BATCH_SIZE]
-                logger.info(f"Processing batch {i//self.BATCH_SIZE + 1} of {len(documents)//self.BATCH_SIZE + 1}")
-                
-                # Process texts before creating/adding
+            # Create new Chroma vector store with initial small batch
+            first_batch = documents[:self.BATCH_SIZE]
+            texts = [doc.page_content for doc in first_batch]
+            texts = self._process_text_for_embedding(texts)
+            metadatas = [doc.metadata for doc in first_batch]
+            
+            vector_store = Chroma.from_texts(
+                texts=texts,
+                embedding=self.embeddings,
+                metadatas=metadatas,
+                client=self.chroma_client,
+                collection_name=self.COLLECTION_NAME
+            )
+
+            # Process remaining documents in smaller batches
+            remaining_docs = documents[self.BATCH_SIZE:]
+            for i in range(0, len(remaining_docs), self.BATCH_SIZE):
+                batch = remaining_docs[i:i + self.BATCH_SIZE]
                 texts = [doc.page_content for doc in batch]
                 texts = self._process_text_for_embedding(texts)
                 metadatas = [doc.metadata for doc in batch]
                 
-                if vector_store is None:
-                    # Create initial vector store with first batch
-                    vector_store = Chroma.from_texts(
-                        texts=texts,
-                        embedding=self.embeddings,
-                        metadatas=metadatas,
-                        client=self.chroma_client,
-                        collection_name=self.COLLECTION_NAME
-                    )
-                else:
-                    # Add subsequent batches
+                try:
                     vector_store.add_texts(texts=texts, metadatas=metadatas)
-                
-                # Add delay between batches to respect rate limits
-                if i + self.BATCH_SIZE < len(documents):
-                    time.sleep(self.BATCH_DELAY)
+                    if i + self.BATCH_SIZE < len(remaining_docs):
+                        time.sleep(self.EMBEDDING_DELAY)
+                except Exception as e:
+                    logger.error(f"Error processing batch {i//self.BATCH_SIZE}: {str(e)}")
+                    continue
             
             logger.info(f"Successfully created vector store with {len(documents)} documents")
             return vector_store
-                
+                    
         except Exception as e:
             logger.error(f"Error creating vector store: {str(e)}")
             raise

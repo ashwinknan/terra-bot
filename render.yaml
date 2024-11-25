@@ -3,7 +3,18 @@ services:
     name: rag-game-assistant-backend
     env: python
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: cd backend && gunicorn --config gunicorn_config.py "app.main:create_app()"
+    startCommand: >
+      cd backend && gunicorn "app.main:create_app()" 
+      --timeout 120
+      --workers 1
+      --threads 4
+      --worker-class gthread
+      --max-requests 100
+      --max-requests-jitter 20
+      --log-level debug
+      --bind 0.0.0.0:$PORT
+      --preload
+      --worker-tmp-dir /dev/shm
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
@@ -19,15 +30,16 @@ services:
         sync: false
       - key: ALLOWED_ORIGIN
         sync: false
-      # Reduce batch sizes and limits
       - key: VECTOR_STORE_TOP_K
-        value: "4"
+        value: "3"
       - key: LLM_MAX_TOKENS
-        value: "2048"
+        value: "1024"
       - key: CHUNK_SIZE
-        value: "1000"
+        value: "500"
       - key: CHUNK_OVERLAP
-        value: "100"
+        value: "50"
+      - key: WEB_CONCURRENCY
+        value: "1"
     healthCheckPath: /api/
     autoDeploy: true
 

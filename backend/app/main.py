@@ -30,14 +30,14 @@ def create_app(force_recreate=False):
         )
 
         # Configure gunicorn settings via app config
+        # Configure gunicorn worker settings
         app.config.update({
             'worker_class': 'gthread',
-            'workers': 2,
+            'workers': 1,
             'threads': 4,
-            'timeout': 300,
-            'keepalive': 5,
-            'max_requests': 1000,
-            'max_requests_jitter': 50
+            'timeout': 120,
+            'max_requests': 100,
+            'max_requests_jitter': 20
         })
         
         # Add CORS headers to all responses
@@ -48,11 +48,12 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Credentials', 'true')
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
-
+        
         # Initialize components before registering blueprints
-        logger.info("Starting application initialization...")
-        initialize_app(force_recreate)
-        logger.info("Application initialization completed")
+        with app.app_context():
+            logger.info("Starting application initialization...")
+            initialize_app(force_recreate)
+            logger.info("Application initialization completed")
         
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
