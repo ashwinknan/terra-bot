@@ -3,19 +3,12 @@ services:
     name: rag-game-assistant-backend
     env: python
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: >
-      cd backend && gunicorn 
-      --workers 1
-      --threads 4
-      --timeout 120
-      --bind 0.0.0.0:$PORT
-      --access-logfile '-'
-      --error-logfile '-'
-      --log-level debug
-      "app.main:create_app()"
+    startCommand: cd backend && gunicorn --config gunicorn_config.py "app.main:create_app()"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
+      - key: PORT
+        value: 10000
       - key: FLASK_ENV
         value: production
       - key: FLASK_DEBUG 
@@ -55,6 +48,3 @@ services:
       - path: /*
         name: Cache-Control
         value: no-cache
-      - path: /*  
-        name: Access-Control-Allow-Origin
-        value: "*"

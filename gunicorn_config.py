@@ -1,9 +1,8 @@
-# backend/gunicorn_config.py
-import multiprocessing
 import os
 
 # Basic config
-bind = f"0.0.0.0:{os.getenv('PORT', '5001')}"
+port = int(os.environ.get('PORT', '10000'))  # Changed default to 10000 to match Render
+bind = f"0.0.0.0:{port}"
 worker_class = 'gthread'
 workers = 1
 threads = 4
@@ -23,10 +22,14 @@ daemon = False
 # Logging
 accesslog = '-'
 errorlog = '-'
-loglevel = 'debug'
+loglevel = 'info'
 
 # Process naming
 proc_name = 'rag-game-assistant'
+
+def when_ready(server):
+    """Log when server is ready"""
+    server.log.info("Gunicorn server is ready!")
 
 def post_fork(server, worker):
     """Setup after worker fork"""
