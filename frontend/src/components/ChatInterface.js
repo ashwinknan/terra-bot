@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './ChatInterface.css';
 
-//const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://rag-game-assistant-backend.onrender.com';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
 
 const ChatInterface = () => {
@@ -15,7 +14,17 @@ const ChatInterface = () => {
     // Test backend connection on component mount
     const testBackendConnection = async () => {
       try {
-        await axios.post(`${BACKEND_URL}/api/ask`, { question: 'test' });
+        await axios.post(`${BACKEND_URL}/api/ask`, 
+          { question: 'test' },
+          {
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            },
+            withCredentials: false,
+            timeout: 60000
+          }
+        );
         console.log('Backend connection successful');
       } catch (err) {
         console.log('Backend connection test:', err.message);
@@ -47,9 +56,11 @@ const ChatInterface = () => {
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
           },
-          timeout: 30000
+          withCredentials: false,  // Important for CORS
+          timeout: 60000  // Increased timeout to 60 seconds
         }
       );
       

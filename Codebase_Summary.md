@@ -16,7 +16,7 @@
     │   └── README.md
     ├── backend
     │   ├── .cache
-    │   │   ├── 998913a0-b3a3-459f-a229-86ba3d2d2a03
+    │   │   ├── 35bcf87d-4d5a-48e6-bdbd-8266207d27c1
     │   │   │   ├── data_level0.bin
     │   │   │   ├── header.bin
     │   │   │   ├── length.bin
@@ -143,13 +143,14 @@
     ├── .gitignore
     ├── deployment_test.py
     ├── generate_code_summary.py
+    ├── gunicorn_config.py
     └── render.yaml
 ```
 
 ## File Statistics
 - .css: 3 files
 - .js: 12 files
-- .py: 66 files
+- .py: 67 files
 - .yaml: 1 files
 
 ## Root Directory Files
@@ -722,6 +723,51 @@ if __name__ == "__main__":
     )
 ```
 
+# File: gunicorn_config.py
+```python
+# backend/gunicorn_config.py
+import multiprocessing
+import os
+
+# Basic config
+bind = f"0.0.0.0:{os.getenv('PORT', '5001')}"
+worker_class = 'gthread'
+workers = 1
+threads = 4
+
+# Timeouts and limits
+timeout = 120
+keepalive = 5
+max_requests = 100
+max_requests_jitter = 20
+graceful_timeout = 30
+
+# Performance optimizations
+worker_tmp_dir = "/dev/shm"
+preload_app = True
+daemon = False
+
+# Logging
+accesslog = '-'
+errorlog = '-'
+loglevel = 'debug'
+
+# Process naming
+proc_name = 'rag-game-assistant'
+
+def post_fork(server, worker):
+    """Setup after worker fork"""
+    server.log.info(f"Worker spawned (pid: {worker.pid})")
+
+def worker_int(worker):
+    """Worker shutdown on SIGINT"""
+    worker.log.info(f"Worker shutting down: {worker.pid}")
+
+def worker_abort(worker):
+    """Worker shutdown on SIGABRT"""
+    worker.log.info(f"Worker aborting: {worker.pid}")
+```
+
 # File: render.yaml
 ```yaml
 services:
@@ -731,12 +777,16 @@ services:
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
     startCommand: >
       cd backend && gunicorn "app.main:create_app()" 
-      --timeout 300 
+      --timeout 120
       --workers 1
       --threads 4
       --worker-class gthread
-      --log-level info
+      --max-requests 100
+      --max-requests-jitter 20
+      --log-level debug
       --bind 0.0.0.0:$PORT
+      --preload
+      --worker-tmp-dir /dev/shm
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
@@ -752,22 +802,18 @@ services:
         sync: false
       - key: ALLOWED_ORIGIN
         sync: false
-      - key: VECTOR_STORE_SIMILARITY_THRESHOLD
-        value: "0.3"
       - key: VECTOR_STORE_TOP_K
-        value: "8"
-      - key: LLM_TEMPERATURE
-        value: "0.3"
+        value: "3"
       - key: LLM_MAX_TOKENS
-        value: "4096"
-      - key: MMR_DIVERSITY_SCORE
-        value: "0.3"
+        value: "1024"
+      - key: CHUNK_SIZE
+        value: "500"
+      - key: CHUNK_OVERLAP
+        value: "50"
+      - key: WEB_CONCURRENCY
+        value: "1"
     healthCheckPath: /api/
     autoDeploy: true
-    disk:
-      name: cache
-      mountPath: /opt/render/project/src/backend/.cache
-      sizeGB: 1
 
   - type: web
     name: rag-game-assistant-frontend
@@ -776,15 +822,11 @@ services:
     staticPublishPath: ./frontend/build
     envVars:
       - key: REACT_APP_BACKEND_URL
-        value: https://rag-game-assistant.onrender.com # Change to your backend URL
+        value: https://rag-game-assistant.onrender.com
     headers:
       - path: /*
         name: Cache-Control
         value: no-cache
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
 ```
 
 # File: frontend/src/App.js
@@ -1142,6 +1184,17 @@ def create_app(force_recreate=False):
             expose_headers=["Content-Type"],
             max_age=3600
         )
+
+        # Configure gunicorn settings via app config
+        # Configure gunicorn worker settings
+        app.config.update({
+            'worker_class': 'gthread',
+            'workers': 1,
+            'threads': 4,
+            'timeout': 120,
+            'max_requests': 100,
+            'max_requests_jitter': 20
+        })
         
         # Add CORS headers to all responses
         @app.after_request
@@ -1153,28 +1206,14 @@ def create_app(force_recreate=False):
             return response
         
         # Initialize components before registering blueprints
-        logger.info("Starting application initialization...")
-        if not check_versions():
-            logger.warning("Version mismatches detected")
-        if not check_llm_connection():
-            logger.error("LLM connection check failed")
-            
-        # Initialize app (blocking)
-        initialize_app(force_recreate)
-        logger.info("Application initialization completed")
+        with app.app_context():
+            logger.info("Starting application initialization...")
+            initialize_app(force_recreate)
+            logger.info("Application initialization completed")
         
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
         
-        # Add basic route for root path
-        @app.route('/')
-        def root():
-            return jsonify({
-                "status": "healthy",
-                "message": "RAG Game Assistant API"
-            })
-        
-        logger.info("Application creation completed successfully")
         return app
         
     except Exception as e:
@@ -1587,59 +1626,58 @@ def initialize_app(force_recreate=False):
     try:
         logger.info("Starting application initialization...")
         
-        # Setup paths
-        base_path = Path(__file__).parent.parent.parent
-        knowledge_base_path = base_path / "data" / "knowledge_base"
+        # Add initialization timeout
+        import signal
         
-        # Ensure directory exists
-        knowledge_base_path.mkdir(exist_ok=True, parents=True)
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Initialization timed out")
         
-        # Initialize document processor with settings from config
-        logger.info("Initializing document processor...")
-        AppComponents.doc_processor = DocumentProcessor(
-            knowledge_base_path=str(knowledge_base_path),
-            max_retries=MAX_RETRIES,
-            retry_delay=RETRY_DELAY,
-            min_chunk_size=MIN_CHUNK_SIZE,
-            max_chunk_size=MAX_CHUNK_SIZE
-        )
+        # Set 60 second timeout for initialization
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(60)
         
-        # Load documents
-        logger.info("Loading documents...")
-        documents = AppComponents.doc_processor.load_documents()
-        stats = AppComponents.doc_processor.get_processing_stats()
-        logger.info(
-            f"Document processing complete: "
-            f"Processed {stats['total_files']} files, "
-            f"Success: {stats['successful_files']}, "
-            f"Failed: {stats['failed_files']}, "
-            f"Total chunks: {stats['total_chunks']}, "
-            f"Retries: {stats['retry_count']}"
-        )
-        
-        # Initialize vector store manager
-        logger.info("Initializing vector store manager...")
-        AppComponents.vector_store_manager = VectorStoreManager(
-            doc_processor=AppComponents.doc_processor
-        )
-        
-        # Initialize vector store
-        logger.info("Initializing vector store...")
-        AppComponents.vector_store = _retry_with_backoff(
-            lambda: AppComponents.vector_store_manager.get_or_create_vector_store(
-                force_recreate=force_recreate
+        try:
+            # Setup paths
+            base_path = Path(__file__).parent.parent.parent
+            knowledge_base_path = base_path / "data" / "knowledge_base"
+            
+            # Ensure directory exists
+            knowledge_base_path.mkdir(exist_ok=True, parents=True)
+            
+            # Initialize components with reduced batch sizes and caching
+            AppComponents.doc_processor = DocumentProcessor(
+                knowledge_base_path=str(knowledge_base_path),
+                max_retries=2,  # Reduced from 3
+                retry_delay=0.5,  # Reduced from 1.0
+                min_chunk_size=MIN_CHUNK_SIZE,
+                max_chunk_size=MAX_CHUNK_SIZE
             )
-        )
+            
+            documents = AppComponents.doc_processor.load_documents()
+            
+            AppComponents.vector_store_manager = VectorStoreManager(
+                doc_processor=AppComponents.doc_processor
+            )
+            
+            AppComponents.vector_store = _retry_with_backoff(
+                lambda: AppComponents.vector_store_manager.get_or_create_vector_store(
+                    force_recreate=force_recreate
+                )
+            )
 
-        # Initialize QA chain manager and create chain
-        logger.info("Initializing QA chain...")
-        AppComponents.qa_chain_manager = QAChainManager()
-        AppComponents.qa_chain = AppComponents.qa_chain_manager.create_qa_chain(
-            AppComponents.vector_store
-        )
-        
+            AppComponents.qa_chain_manager = QAChainManager()
+            AppComponents.qa_chain = AppComponents.qa_chain_manager.create_qa_chain(
+                AppComponents.vector_store
+            )
+            
+        finally:
+            signal.alarm(0)  # Disable the alarm
+            
         logger.info("Application initialization completed successfully")
         
+    except TimeoutError:
+        logger.error("Application initialization timed out")
+        raise RuntimeError("Failed to initialize application: timeout")
     except Exception as e:
         logger.error(f"Error during initialization: {str(e)}")
         raise RuntimeError(f"Failed to start server: {str(e)}")
@@ -1661,6 +1699,8 @@ def shutdown_app():
 ```python
 import logging
 from typing import Any, Dict, List
+from threading import Thread, Event
+import time
 from langchain_anthropic import ChatAnthropic
 from langchain.memory import ConversationBufferMemory
 from langchain_community.vectorstores import Chroma
@@ -1668,6 +1708,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from app.config.settings import (
     ANTHROPIC_API_KEY,
@@ -1703,6 +1744,9 @@ class QAChainManager:
         self.error_chain = None
         self.retriever = None
         self.last_sources = []
+        
+        # Initialize thread pool executor
+        self.executor = ThreadPoolExecutor(max_workers=1)
 
     def create_qa_chain(self, vector_store: Chroma) -> Any:
         """Create a conversational retrieval chain"""
@@ -1769,35 +1813,21 @@ class QAChainManager:
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
 
-            # Select chain based on query type
+            # Select chain based on query type and get response
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
-
-            try:
-                # Get response
-                response = selected_chain.invoke({"question": query})
-                
-                # Store in memory if string response
-                if isinstance(response, str):
-                    self.memory.chat_memory.add_user_message(query)
-                    self.memory.chat_memory.add_ai_message(response)
-                
-                # Format response consistently
-                formatted_response = {
-                    "answer": response,
-                    "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
-                    "chat_history": self.get_chat_history()
-                }
-
-                return formatted_response
-
-            except Exception as chain_error:
-                logger.error(f"Chain error: {str(chain_error)}")
-                return {
-                    "answer": f"Error processing query: {str(chain_error)}",
-                    "sources": [],
-                    "chat_history": self.get_chat_history()
-                }
+            response = selected_chain.invoke({"question": query})
+            
+            # Store in memory if string response
+            if isinstance(response, str):
+                self.memory.chat_memory.add_user_message(query)
+                self.memory.chat_memory.add_ai_message(response)
+            
+            return {
+                "answer": response,
+                "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+                "chat_history": self.get_chat_history()
+            }
 
         except Exception as e:
             logger.error(f"Error in process_query: {str(e)}", exc_info=True)
@@ -1806,6 +1836,20 @@ class QAChainManager:
                 "sources": [],
                 "chat_history": self.get_chat_history()
             }
+
+    def _process_query_internal(self, chain: Any, query: str) -> Dict[str, Any]:
+        """Internal method to process query without timeout logic"""
+        response = chain.invoke({"question": query})
+        
+        if isinstance(response, str):
+            self.memory.chat_memory.add_user_message(query)
+            self.memory.chat_memory.add_ai_message(response)
+        
+        return {
+            "answer": response,
+            "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+            "chat_history": self.get_chat_history()
+        }
 
     def determine_query_type(self, query: str) -> str:
         """Determine the type of query to select appropriate chain"""
@@ -1834,6 +1878,13 @@ class QAChainManager:
             logger.info("Conversation memory cleared")
         except Exception as e:
             logger.error(f"Error clearing memory: {str(e)}")
+
+    def __del__(self):
+        """Cleanup method"""
+        try:
+            self.executor.shutdown(wait=False)
+        except:
+            pass
 ```
 
 # File: backend/app/core/vector_store.py
@@ -1871,8 +1922,9 @@ class VectorStoreManager:
     _instances = {}
     _temp_dirs = set()
     COLLECTION_NAME = "game_development_docs"
-    BATCH_SIZE = 50
     BATCH_DELAY = 2
+    BATCH_SIZE = 10  # Reduced from 50
+    EMBEDDING_DELAY = 1  # Reduced from 2
 
     @classmethod
     def reset_instances(cls):
@@ -2027,48 +2079,50 @@ class VectorStoreManager:
             raise
 
     def create_vector_store(self, documents: List[Document]) -> Chroma:
-        """Create a new vector store with batched processing"""
+        """Create a new vector store with optimized batched processing"""
         try:
             if not documents:
                 logger.warning("No documents provided to create vector store")
                 raise ValueError("Cannot create vector store with empty document list")
 
-            # Reset the client to clear any existing collections
+            # Reset the client
             self.chroma_client.reset()
             
             logger.info(f"Creating new vector store with {len(documents)} documents")
             
-            # Create new Chroma vector store
-            vector_store = None
-            for i in range(0, len(documents), self.BATCH_SIZE):
-                batch = documents[i:i + self.BATCH_SIZE]
-                logger.info(f"Processing batch {i//self.BATCH_SIZE + 1} of {len(documents)//self.BATCH_SIZE + 1}")
-                
-                # Process texts before creating/adding
+            # Create new Chroma vector store with initial small batch
+            first_batch = documents[:self.BATCH_SIZE]
+            texts = [doc.page_content for doc in first_batch]
+            texts = self._process_text_for_embedding(texts)
+            metadatas = [doc.metadata for doc in first_batch]
+            
+            vector_store = Chroma.from_texts(
+                texts=texts,
+                embedding=self.embeddings,
+                metadatas=metadatas,
+                client=self.chroma_client,
+                collection_name=self.COLLECTION_NAME
+            )
+
+            # Process remaining documents in smaller batches
+            remaining_docs = documents[self.BATCH_SIZE:]
+            for i in range(0, len(remaining_docs), self.BATCH_SIZE):
+                batch = remaining_docs[i:i + self.BATCH_SIZE]
                 texts = [doc.page_content for doc in batch]
                 texts = self._process_text_for_embedding(texts)
                 metadatas = [doc.metadata for doc in batch]
                 
-                if vector_store is None:
-                    # Create initial vector store with first batch
-                    vector_store = Chroma.from_texts(
-                        texts=texts,
-                        embedding=self.embeddings,
-                        metadatas=metadatas,
-                        client=self.chroma_client,
-                        collection_name=self.COLLECTION_NAME
-                    )
-                else:
-                    # Add subsequent batches
+                try:
                     vector_store.add_texts(texts=texts, metadatas=metadatas)
-                
-                # Add delay between batches to respect rate limits
-                if i + self.BATCH_SIZE < len(documents):
-                    time.sleep(self.BATCH_DELAY)
+                    if i + self.BATCH_SIZE < len(remaining_docs):
+                        time.sleep(self.EMBEDDING_DELAY)
+                except Exception as e:
+                    logger.error(f"Error processing batch {i//self.BATCH_SIZE}: {str(e)}")
+                    continue
             
             logger.info(f"Successfully created vector store with {len(documents)} documents")
             return vector_store
-                
+                    
         except Exception as e:
             logger.error(f"Error creating vector store: {str(e)}")
             raise
@@ -2490,6 +2544,9 @@ CODE_CHUNK_SIZE = get_env_int('CODE_CHUNK_SIZE', 11800)
 CODE_CHUNK_OVERLAP = get_env_int('CODE_CHUNK_OVERLAP', 400)
 MIN_CODE_CHUNK_SIZE = get_env_int('MIN_CODE_CHUNK_SIZE', 50)
 MAX_CODE_CHUNK_SIZE = get_env_int('MAX_CODE_CHUNK_SIZE', 11800)
+
+# Add these to backend/app/config/settings.py
+
 
 def validate_settings() -> Dict[str, Any]:
     """Validate all settings and return current configuration"""
@@ -5459,6 +5516,17 @@ def create_app(force_recreate=False):
             expose_headers=["Content-Type"],
             max_age=3600
         )
+
+        # Configure gunicorn settings via app config
+        # Configure gunicorn worker settings
+        app.config.update({
+            'worker_class': 'gthread',
+            'workers': 1,
+            'threads': 4,
+            'timeout': 120,
+            'max_requests': 100,
+            'max_requests_jitter': 20
+        })
         
         # Add CORS headers to all responses
         @app.after_request
@@ -5470,28 +5538,14 @@ def create_app(force_recreate=False):
             return response
         
         # Initialize components before registering blueprints
-        logger.info("Starting application initialization...")
-        if not check_versions():
-            logger.warning("Version mismatches detected")
-        if not check_llm_connection():
-            logger.error("LLM connection check failed")
-            
-        # Initialize app (blocking)
-        initialize_app(force_recreate)
-        logger.info("Application initialization completed")
+        with app.app_context():
+            logger.info("Starting application initialization...")
+            initialize_app(force_recreate)
+            logger.info("Application initialization completed")
         
         # Register blueprints
         app.register_blueprint(api_bp, url_prefix='/api')
         
-        # Add basic route for root path
-        @app.route('/')
-        def root():
-            return jsonify({
-                "status": "healthy",
-                "message": "RAG Game Assistant API"
-            })
-        
-        logger.info("Application creation completed successfully")
         return app
         
     except Exception as e:
@@ -5904,59 +5958,58 @@ def initialize_app(force_recreate=False):
     try:
         logger.info("Starting application initialization...")
         
-        # Setup paths
-        base_path = Path(__file__).parent.parent.parent
-        knowledge_base_path = base_path / "data" / "knowledge_base"
+        # Add initialization timeout
+        import signal
         
-        # Ensure directory exists
-        knowledge_base_path.mkdir(exist_ok=True, parents=True)
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Initialization timed out")
         
-        # Initialize document processor with settings from config
-        logger.info("Initializing document processor...")
-        AppComponents.doc_processor = DocumentProcessor(
-            knowledge_base_path=str(knowledge_base_path),
-            max_retries=MAX_RETRIES,
-            retry_delay=RETRY_DELAY,
-            min_chunk_size=MIN_CHUNK_SIZE,
-            max_chunk_size=MAX_CHUNK_SIZE
-        )
+        # Set 60 second timeout for initialization
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(60)
         
-        # Load documents
-        logger.info("Loading documents...")
-        documents = AppComponents.doc_processor.load_documents()
-        stats = AppComponents.doc_processor.get_processing_stats()
-        logger.info(
-            f"Document processing complete: "
-            f"Processed {stats['total_files']} files, "
-            f"Success: {stats['successful_files']}, "
-            f"Failed: {stats['failed_files']}, "
-            f"Total chunks: {stats['total_chunks']}, "
-            f"Retries: {stats['retry_count']}"
-        )
-        
-        # Initialize vector store manager
-        logger.info("Initializing vector store manager...")
-        AppComponents.vector_store_manager = VectorStoreManager(
-            doc_processor=AppComponents.doc_processor
-        )
-        
-        # Initialize vector store
-        logger.info("Initializing vector store...")
-        AppComponents.vector_store = _retry_with_backoff(
-            lambda: AppComponents.vector_store_manager.get_or_create_vector_store(
-                force_recreate=force_recreate
+        try:
+            # Setup paths
+            base_path = Path(__file__).parent.parent.parent
+            knowledge_base_path = base_path / "data" / "knowledge_base"
+            
+            # Ensure directory exists
+            knowledge_base_path.mkdir(exist_ok=True, parents=True)
+            
+            # Initialize components with reduced batch sizes and caching
+            AppComponents.doc_processor = DocumentProcessor(
+                knowledge_base_path=str(knowledge_base_path),
+                max_retries=2,  # Reduced from 3
+                retry_delay=0.5,  # Reduced from 1.0
+                min_chunk_size=MIN_CHUNK_SIZE,
+                max_chunk_size=MAX_CHUNK_SIZE
             )
-        )
+            
+            documents = AppComponents.doc_processor.load_documents()
+            
+            AppComponents.vector_store_manager = VectorStoreManager(
+                doc_processor=AppComponents.doc_processor
+            )
+            
+            AppComponents.vector_store = _retry_with_backoff(
+                lambda: AppComponents.vector_store_manager.get_or_create_vector_store(
+                    force_recreate=force_recreate
+                )
+            )
 
-        # Initialize QA chain manager and create chain
-        logger.info("Initializing QA chain...")
-        AppComponents.qa_chain_manager = QAChainManager()
-        AppComponents.qa_chain = AppComponents.qa_chain_manager.create_qa_chain(
-            AppComponents.vector_store
-        )
-        
+            AppComponents.qa_chain_manager = QAChainManager()
+            AppComponents.qa_chain = AppComponents.qa_chain_manager.create_qa_chain(
+                AppComponents.vector_store
+            )
+            
+        finally:
+            signal.alarm(0)  # Disable the alarm
+            
         logger.info("Application initialization completed successfully")
         
+    except TimeoutError:
+        logger.error("Application initialization timed out")
+        raise RuntimeError("Failed to initialize application: timeout")
     except Exception as e:
         logger.error(f"Error during initialization: {str(e)}")
         raise RuntimeError(f"Failed to start server: {str(e)}")
@@ -5978,6 +6031,8 @@ def shutdown_app():
 ```python
 import logging
 from typing import Any, Dict, List
+from threading import Thread, Event
+import time
 from langchain_anthropic import ChatAnthropic
 from langchain.memory import ConversationBufferMemory
 from langchain_community.vectorstores import Chroma
@@ -5985,6 +6040,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from app.config.settings import (
     ANTHROPIC_API_KEY,
@@ -6020,6 +6076,9 @@ class QAChainManager:
         self.error_chain = None
         self.retriever = None
         self.last_sources = []
+        
+        # Initialize thread pool executor
+        self.executor = ThreadPoolExecutor(max_workers=1)
 
     def create_qa_chain(self, vector_store: Chroma) -> Any:
         """Create a conversational retrieval chain"""
@@ -6086,35 +6145,21 @@ class QAChainManager:
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
 
-            # Select chain based on query type
+            # Select chain based on query type and get response
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
-
-            try:
-                # Get response
-                response = selected_chain.invoke({"question": query})
-                
-                # Store in memory if string response
-                if isinstance(response, str):
-                    self.memory.chat_memory.add_user_message(query)
-                    self.memory.chat_memory.add_ai_message(response)
-                
-                # Format response consistently
-                formatted_response = {
-                    "answer": response,
-                    "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
-                    "chat_history": self.get_chat_history()
-                }
-
-                return formatted_response
-
-            except Exception as chain_error:
-                logger.error(f"Chain error: {str(chain_error)}")
-                return {
-                    "answer": f"Error processing query: {str(chain_error)}",
-                    "sources": [],
-                    "chat_history": self.get_chat_history()
-                }
+            response = selected_chain.invoke({"question": query})
+            
+            # Store in memory if string response
+            if isinstance(response, str):
+                self.memory.chat_memory.add_user_message(query)
+                self.memory.chat_memory.add_ai_message(response)
+            
+            return {
+                "answer": response,
+                "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+                "chat_history": self.get_chat_history()
+            }
 
         except Exception as e:
             logger.error(f"Error in process_query: {str(e)}", exc_info=True)
@@ -6123,6 +6168,20 @@ class QAChainManager:
                 "sources": [],
                 "chat_history": self.get_chat_history()
             }
+
+    def _process_query_internal(self, chain: Any, query: str) -> Dict[str, Any]:
+        """Internal method to process query without timeout logic"""
+        response = chain.invoke({"question": query})
+        
+        if isinstance(response, str):
+            self.memory.chat_memory.add_user_message(query)
+            self.memory.chat_memory.add_ai_message(response)
+        
+        return {
+            "answer": response,
+            "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
+            "chat_history": self.get_chat_history()
+        }
 
     def determine_query_type(self, query: str) -> str:
         """Determine the type of query to select appropriate chain"""
@@ -6151,6 +6210,13 @@ class QAChainManager:
             logger.info("Conversation memory cleared")
         except Exception as e:
             logger.error(f"Error clearing memory: {str(e)}")
+
+    def __del__(self):
+        """Cleanup method"""
+        try:
+            self.executor.shutdown(wait=False)
+        except:
+            pass
 ```
 
 # File: backend/app/core/vector_store.py
@@ -6188,8 +6254,9 @@ class VectorStoreManager:
     _instances = {}
     _temp_dirs = set()
     COLLECTION_NAME = "game_development_docs"
-    BATCH_SIZE = 50
     BATCH_DELAY = 2
+    BATCH_SIZE = 10  # Reduced from 50
+    EMBEDDING_DELAY = 1  # Reduced from 2
 
     @classmethod
     def reset_instances(cls):
@@ -6344,48 +6411,50 @@ class VectorStoreManager:
             raise
 
     def create_vector_store(self, documents: List[Document]) -> Chroma:
-        """Create a new vector store with batched processing"""
+        """Create a new vector store with optimized batched processing"""
         try:
             if not documents:
                 logger.warning("No documents provided to create vector store")
                 raise ValueError("Cannot create vector store with empty document list")
 
-            # Reset the client to clear any existing collections
+            # Reset the client
             self.chroma_client.reset()
             
             logger.info(f"Creating new vector store with {len(documents)} documents")
             
-            # Create new Chroma vector store
-            vector_store = None
-            for i in range(0, len(documents), self.BATCH_SIZE):
-                batch = documents[i:i + self.BATCH_SIZE]
-                logger.info(f"Processing batch {i//self.BATCH_SIZE + 1} of {len(documents)//self.BATCH_SIZE + 1}")
-                
-                # Process texts before creating/adding
+            # Create new Chroma vector store with initial small batch
+            first_batch = documents[:self.BATCH_SIZE]
+            texts = [doc.page_content for doc in first_batch]
+            texts = self._process_text_for_embedding(texts)
+            metadatas = [doc.metadata for doc in first_batch]
+            
+            vector_store = Chroma.from_texts(
+                texts=texts,
+                embedding=self.embeddings,
+                metadatas=metadatas,
+                client=self.chroma_client,
+                collection_name=self.COLLECTION_NAME
+            )
+
+            # Process remaining documents in smaller batches
+            remaining_docs = documents[self.BATCH_SIZE:]
+            for i in range(0, len(remaining_docs), self.BATCH_SIZE):
+                batch = remaining_docs[i:i + self.BATCH_SIZE]
                 texts = [doc.page_content for doc in batch]
                 texts = self._process_text_for_embedding(texts)
                 metadatas = [doc.metadata for doc in batch]
                 
-                if vector_store is None:
-                    # Create initial vector store with first batch
-                    vector_store = Chroma.from_texts(
-                        texts=texts,
-                        embedding=self.embeddings,
-                        metadatas=metadatas,
-                        client=self.chroma_client,
-                        collection_name=self.COLLECTION_NAME
-                    )
-                else:
-                    # Add subsequent batches
+                try:
                     vector_store.add_texts(texts=texts, metadatas=metadatas)
-                
-                # Add delay between batches to respect rate limits
-                if i + self.BATCH_SIZE < len(documents):
-                    time.sleep(self.BATCH_DELAY)
+                    if i + self.BATCH_SIZE < len(remaining_docs):
+                        time.sleep(self.EMBEDDING_DELAY)
+                except Exception as e:
+                    logger.error(f"Error processing batch {i//self.BATCH_SIZE}: {str(e)}")
+                    continue
             
             logger.info(f"Successfully created vector store with {len(documents)} documents")
             return vector_store
-                
+                    
         except Exception as e:
             logger.error(f"Error creating vector store: {str(e)}")
             raise
@@ -6807,6 +6876,9 @@ CODE_CHUNK_SIZE = get_env_int('CODE_CHUNK_SIZE', 11800)
 CODE_CHUNK_OVERLAP = get_env_int('CODE_CHUNK_OVERLAP', 400)
 MIN_CODE_CHUNK_SIZE = get_env_int('MIN_CODE_CHUNK_SIZE', 50)
 MAX_CODE_CHUNK_SIZE = get_env_int('MAX_CODE_CHUNK_SIZE', 11800)
+
+# Add these to backend/app/config/settings.py
+
 
 def validate_settings() -> Dict[str, Any]:
     """Validate all settings and return current configuration"""
