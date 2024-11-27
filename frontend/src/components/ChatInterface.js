@@ -18,8 +18,7 @@ const ChatInterface = () => {
           { question: 'test' },
           {
             headers: { 
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
+              'Content-Type': 'application/json'
             },
             withCredentials: false,
             timeout: 60000
@@ -56,11 +55,10 @@ const ChatInterface = () => {
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
+            'Content-Type': 'application/json'
           },
-          withCredentials: false,  // Important for CORS
-          timeout: 60000  // Increased timeout to 60 seconds
+          withCredentials: false,
+          timeout: 60000
         }
       );
       

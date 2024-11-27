@@ -725,12 +725,11 @@ if __name__ == "__main__":
 
 # File: gunicorn_config.py
 ```python
-# backend/gunicorn_config.py
-import multiprocessing
 import os
 
 # Basic config
-bind = f"0.0.0.0:{os.getenv('PORT', '5001')}"
+port = int(os.environ.get('PORT', '10000'))  # Changed default to 10000 to match Render
+bind = f"0.0.0.0:{port}"
 worker_class = 'gthread'
 workers = 1
 threads = 4
@@ -750,10 +749,14 @@ daemon = False
 # Logging
 accesslog = '-'
 errorlog = '-'
-loglevel = 'debug'
+loglevel = 'info'
 
 # Process naming
 proc_name = 'rag-game-assistant'
+
+def when_ready(server):
+    """Log when server is ready"""
+    server.log.info("Gunicorn server is ready!")
 
 def post_fork(server, worker):
     """Setup after worker fork"""
@@ -775,37 +778,30 @@ services:
     name: rag-game-assistant-backend
     env: python
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: >
-      cd backend && gunicorn "app.main:create_app()" 
-      --timeout 120
-      --workers 1
-      --threads 4
-      --worker-class gthread
-      --max-requests 100
-      --max-requests-jitter 20
-      --log-level debug
-      --bind 0.0.0.0:$PORT
-      --preload
-      --worker-tmp-dir /dev/shm
+    startCommand: cd backend && gunicorn --config gunicorn_config.py "app.main:create_app()"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
-      - key: FLASK_DEBUG
+      - key: PORT
+        value: 10000
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_DEBUG 
         value: false
       - key: ENABLE_CACHE
         value: true
       - key: CACHE_DIR
-        value: /opt/render/project/src/backend/.cache
+        value: /opt/render/project/src/.cache
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: COHERE_API_KEY
-        sync: false
+        sync: false  
       - key: ALLOWED_ORIGIN
-        sync: false
+        value: "https://rag-game-assistant-frontend.onrender.com"
       - key: VECTOR_STORE_TOP_K
         value: "3"
       - key: LLM_MAX_TOKENS
-        value: "1024"
+        value: "1024" 
       - key: CHUNK_SIZE
         value: "500"
       - key: CHUNK_OVERLAP
@@ -822,7 +818,7 @@ services:
     staticPublishPath: ./frontend/build
     envVars:
       - key: REACT_APP_BACKEND_URL
-        value: https://rag-game-assistant.onrender.com
+        value: "https://rag-game-assistant-backend.onrender.com"
     headers:
       - path: /*
         name: Cache-Control
@@ -917,7 +913,6 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './ChatInterface.css';
 
-//const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://rag-game-assistant-backend.onrender.com';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
 
 const ChatInterface = () => {
@@ -930,7 +925,17 @@ const ChatInterface = () => {
     // Test backend connection on component mount
     const testBackendConnection = async () => {
       try {
-        await axios.post(`${BACKEND_URL}/api/ask`, { question: 'test' });
+        await axios.post(`${BACKEND_URL}/api/ask`, 
+          { question: 'test' },
+          {
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            },
+            withCredentials: false,
+            timeout: 60000
+          }
+        );
         console.log('Backend connection successful');
       } catch (err) {
         console.log('Backend connection test:', err.message);
@@ -962,9 +967,11 @@ const ChatInterface = () => {
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
           },
-          timeout: 30000
+          withCredentials: false,  // Important for CORS
+          timeout: 60000  // Increased timeout to 60 seconds
         }
       );
       
@@ -1114,14 +1121,17 @@ if __name__ == '__main__':
         app = create_app(force_recreate=True)
         
         logger.info("=== Initialization complete ===")
-        logger.info("Starting Flask server on http://0.0.0.0:5001")
+        
+        # Use same port as gunicorn config
+        port = int(os.environ.get('PORT', 10000))
+        logger.info(f"Starting Flask server on http://0.0.0.0:{port}")
         
         # Start the Flask server
         app.run(
             host='0.0.0.0',
-            port=5001,
-            debug=False,  # Set to False initially to avoid double initialization
-            use_reloader=False  # Disable reloader to avoid double initialization
+            port=port,
+            debug=False,
+            use_reloader=False
         )
     except Exception as e:
         logger.error(f"Failed to start server: {e}", exc_info=True)
@@ -5247,7 +5257,6 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './ChatInterface.css';
 
-//const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://rag-game-assistant-backend.onrender.com';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
 
 const ChatInterface = () => {
@@ -5260,7 +5269,17 @@ const ChatInterface = () => {
     // Test backend connection on component mount
     const testBackendConnection = async () => {
       try {
-        await axios.post(`${BACKEND_URL}/api/ask`, { question: 'test' });
+        await axios.post(`${BACKEND_URL}/api/ask`, 
+          { question: 'test' },
+          {
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            },
+            withCredentials: false,
+            timeout: 60000
+          }
+        );
         console.log('Backend connection successful');
       } catch (err) {
         console.log('Backend connection test:', err.message);
@@ -5292,9 +5311,11 @@ const ChatInterface = () => {
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
           },
-          timeout: 30000
+          withCredentials: false,  // Important for CORS
+          timeout: 60000  // Increased timeout to 60 seconds
         }
       );
       
@@ -5446,14 +5467,17 @@ if __name__ == '__main__':
         app = create_app(force_recreate=True)
         
         logger.info("=== Initialization complete ===")
-        logger.info("Starting Flask server on http://0.0.0.0:5001")
+        
+        # Use same port as gunicorn config
+        port = int(os.environ.get('PORT', 10000))
+        logger.info(f"Starting Flask server on http://0.0.0.0:{port}")
         
         # Start the Flask server
         app.run(
             host='0.0.0.0',
-            port=5001,
-            debug=False,  # Set to False initially to avoid double initialization
-            use_reloader=False  # Disable reloader to avoid double initialization
+            port=port,
+            debug=False,
+            use_reloader=False
         )
     except Exception as e:
         logger.error(f"Failed to start server: {e}", exc_info=True)

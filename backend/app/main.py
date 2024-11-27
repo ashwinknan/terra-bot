@@ -21,12 +21,16 @@ def create_app(force_recreate=False):
         
         # Configure CORS with settings from config
         CORS(app, 
-            origins=[ALLOWED_ORIGIN],
-            methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-            supports_credentials=True,
-            expose_headers=["Content-Type"],
-            max_age=3600
+            resources={
+                r"/api/*": {
+                    "origins": [ALLOWED_ORIGIN],
+                    "methods": ["GET", "POST", "OPTIONS"],
+                    "allow_headers": ["Content-Type"],
+                    "supports_credentials": False,
+                    "expose_headers": ["Content-Type"],
+                    "max_age": 3600
+                }
+            }
         )
 
         # Configure gunicorn settings via app config
@@ -41,6 +45,7 @@ def create_app(force_recreate=False):
         })
         
         # Add CORS headers to all responses
+        """
         @app.after_request
         def after_request(response):
             response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
@@ -48,6 +53,7 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Credentials', 'true')
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
+        """
         
         # Initialize components before registering blueprints
         with app.app_context():

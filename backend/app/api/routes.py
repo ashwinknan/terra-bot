@@ -113,12 +113,13 @@ def ask_question():
             "status": "error"
         }), 500
 
-@api_bp.route('/ask', methods=['OPTIONS'])
+"""@api_bp.route('/ask', methods=['OPTIONS'])
 def handle_ask_options():
-    """Handle CORS preflight for ask endpoint"""
+    "Handle CORS preflight for ask endpoint"
     response = jsonify({'message': 'OK'})
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
     response.headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
+"""

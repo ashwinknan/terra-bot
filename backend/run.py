@@ -1,5 +1,6 @@
 import logging
 import sys
+import os
 from app.main import create_app
 
 # Configure logging
@@ -24,7 +25,7 @@ if __name__ == '__main__':
         logger.info("=== Initialization complete ===")
         
         # Use same port as gunicorn config
-        port = int(os.environ.get('PORT', 10000))
+        port = int(os.environ.get('PORT', 5001))
         logger.info(f"Starting Flask server on http://0.0.0.0:{port}")
         
         # Start the Flask server
