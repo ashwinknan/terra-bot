@@ -1,22 +1,23 @@
+# File: backend/gunicorn_config.py
 import os
 
 # Basic config
-port = int(os.environ.get('PORT', '10000'))  # Changed default to 10000 to match Render
+port = int(os.environ.get('PORT', '10000'))
 bind = f"0.0.0.0:{port}"
 worker_class = 'gthread'
-workers = 1
+workers = 1  # Keep single worker for consistent state
 threads = 4
 
-# Timeouts and limits
-timeout = 120
+# Increase timeouts
+timeout = 300  # Increased to 5 minutes
 keepalive = 5
 max_requests = 100
 max_requests_jitter = 20
-graceful_timeout = 30
+graceful_timeout = 60
 
 # Performance optimizations
 worker_tmp_dir = "/dev/shm"
-preload_app = True
+preload_app = False  # Changed to False to prevent memory issues
 daemon = False
 
 # Logging
@@ -26,6 +27,10 @@ loglevel = 'info'
 
 # Process naming
 proc_name = 'rag-game-assistant'
+
+def on_starting(server):
+    """Log when server starts"""
+    server.log.info("Gunicorn server is starting")
 
 def when_ready(server):
     """Log when server is ready"""

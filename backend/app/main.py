@@ -39,7 +39,7 @@ def create_app(force_recreate=False):
             'worker_class': 'gthread',
             'workers': 1,
             'threads': 4,
-            'timeout': 120,
+            'timeout': 300,
             'max_requests': 100,
             'max_requests_jitter': 20
         })

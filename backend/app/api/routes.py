@@ -123,3 +123,10 @@ def handle_ask_options():
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
 """
+@api_bp.route('/', methods=['GET', 'HEAD'])
+def root():
+    """Handle root path requests"""
+    return jsonify({
+        "status": "online",
+        "message": "RAG Game Assistant API is running. Use /api/ endpoints to interact."
+    })
