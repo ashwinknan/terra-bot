@@ -110,6 +110,9 @@ class QAChainManager:
                     "chat_history": []
                 }
 
+            # Add timeout handling
+            timeout = 300  # 5 minutes timeout
+
             # Clean query
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
@@ -117,13 +120,24 @@ class QAChainManager:
             # Select chain based on query type and get response
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
-            response = selected_chain.invoke({"question": query})
-            
+
+            # Execute with timeout
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(selected_chain.invoke, {"question": query})
+                try:
+                    response = future.result(timeout=timeout)
+                except TimeoutError:
+                    return {
+                        "answer": "Request timed out. Please try again with a simpler question.",
+                        "sources": [],
+                        "chat_history": self.get_chat_history()
+                    }
+
             # Store in memory if string response
             if isinstance(response, str):
                 self.memory.chat_memory.add_user_message(query)
                 self.memory.chat_memory.add_ai_message(response)
-            
+
             return {
                 "answer": response,
                 "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],

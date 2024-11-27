@@ -58,7 +58,7 @@ const ChatInterface = () => {
             'Content-Type': 'application/json'
           },
           withCredentials: false,
-          timeout: 60000
+          timeout: 300000  // 5 minute timeout
         }
       );
       

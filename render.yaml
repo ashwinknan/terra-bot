@@ -1,4 +1,4 @@
-sservices:
+services:
   - type: web
     name: rag-game-assistant-backend
     env: python
@@ -26,7 +26,7 @@ sservices:
       - key: VECTOR_STORE_TOP_K
         value: "3"
       - key: LLM_MAX_TOKENS
-        value: "1024" 
+        value: "512"  # Reduced token limit
       - key: CHUNK_SIZE
         value: "500"
       - key: CHUNK_OVERLAP
