@@ -1,9 +1,10 @@
+# File: render.yaml
 services:
   - type: web
     name: rag-game-assistant-backend
     env: python
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: cd backend && gunicorn --config gunicorn_config.py "app.main:create_app()"
+    startCommand: cd backend && gunicorn --config gunicorn_config.py --timeout 120 --workers 1 --threads 1 "app.main:create_app()"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
@@ -26,14 +27,50 @@ services:
       - key: VECTOR_STORE_TOP_K
         value: "3"
       - key: LLM_MAX_TOKENS
-        value: "512"  # Reduced token limit
+        value: "512"
       - key: CHUNK_SIZE
         value: "500"
       - key: CHUNK_OVERLAP
         value: "50"
       - key: WEB_CONCURRENCY
         value: "1"
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: WORKER_CLASS
+        value: "sync"
+      - key: MAX_REQUESTS
+        value: "0"
+      - key: "RETRIEVAL_MODE"
+        value: "mmr"
+      - key: "MMR_DIVERSITY_SCORE"
+        value: "0.3"
+      - key: "MAX_RETRIES"
+        value: "3"
+      - key: "RETRY_DELAY"
+        value: "1.0"
+      - key: "MIN_CHUNK_SIZE"
+        value: "100"
+      - key: "MAX_CHUNK_SIZE"
+        value: "8000"
+      - key: "CODE_CHUNK_SIZE"
+        value: "11800"
+      - key: "CODE_CHUNK_OVERLAP"
+        value: "400"
+      - key: "MIN_CODE_CHUNK_SIZE"
+        value: "50"
+      - key: "MAX_CODE_CHUNK_SIZE"
+        value: "11800"
+      - key: "COHERE_MODEL"
+        value: "embed-multilingual-v2.0"
     healthCheckPath: /api/
+    startupProbe:
+      httpGet:
+        path: /api/
+        port: 10000
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
     autoDeploy: true
 
   - type: web

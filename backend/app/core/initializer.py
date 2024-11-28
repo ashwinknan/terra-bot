@@ -51,9 +51,9 @@ def initialize_app(force_recreate=False):
         def timeout_handler(signum, frame):
             raise TimeoutError("Initialization timed out")
         
-        # Set 60 second timeout for initialization
+        # Set 90 second timeout for initialization (increased from 60)
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(60)
+        signal.alarm(90)
         
         try:
             # Setup paths
@@ -66,8 +66,8 @@ def initialize_app(force_recreate=False):
             # Initialize components with reduced batch sizes and caching
             AppComponents.doc_processor = DocumentProcessor(
                 knowledge_base_path=str(knowledge_base_path),
-                max_retries=2,  # Reduced from 3
-                retry_delay=0.5,  # Reduced from 1.0
+                max_retries=2,
+                retry_delay=0.5,
                 min_chunk_size=MIN_CHUNK_SIZE,
                 max_chunk_size=MAX_CHUNK_SIZE
             )

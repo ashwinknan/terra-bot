@@ -725,50 +725,45 @@ if __name__ == "__main__":
 
 # File: gunicorn_config.py
 ```python
+# File: backend/gunicorn_config.py
 import os
+import multiprocessing
 
 # Basic config
-port = int(os.environ.get('PORT', '10000'))  # Changed default to 10000 to match Render
+port = int(os.environ.get('PORT', '10000'))
 bind = f"0.0.0.0:{port}"
-worker_class = 'gthread'
-workers = 1
-threads = 4
 
-# Timeouts and limits
-timeout = 120
-keepalive = 5
-max_requests = 100
-max_requests_jitter = 20
-graceful_timeout = 30
+# Worker Settings
+workers = 1  # Single worker to prevent memory issues
+worker_class = 'sync'  # Changed from gthread to sync
+threads = 1  # Reduced threads to prevent concurrency issues
 
-# Performance optimizations
-worker_tmp_dir = "/dev/shm"
-preload_app = True
+# Timeouts
+timeout = 600  # 10 minutes
+graceful_timeout = 300  # 5 minutes
+keepalive = 2
+
+# Request Settings
+max_requests = 0  # Disable max requests
+max_requests_jitter = 0
+
+# Server Mechanics
+preload_app = False
 daemon = False
+reload = False
 
 # Logging
 accesslog = '-'
 errorlog = '-'
-loglevel = 'info'
+loglevel = 'debug'
+capture_output = True
+enable_stdio_inheritance = True
 
-# Process naming
-proc_name = 'rag-game-assistant'
+def on_starting(server):
+    server.log.info("Starting Gunicorn Server")
 
-def when_ready(server):
-    """Log when server is ready"""
-    server.log.info("Gunicorn server is ready!")
-
-def post_fork(server, worker):
-    """Setup after worker fork"""
-    server.log.info(f"Worker spawned (pid: {worker.pid})")
-
-def worker_int(worker):
-    """Worker shutdown on SIGINT"""
-    worker.log.info(f"Worker shutting down: {worker.pid}")
-
-def worker_abort(worker):
-    """Worker shutdown on SIGABRT"""
-    worker.log.info(f"Worker aborting: {worker.pid}")
+def on_exit(server):
+    server.log.info("Shutting down Gunicorn Server")
 ```
 
 # File: render.yaml
@@ -801,7 +796,7 @@ services:
       - key: VECTOR_STORE_TOP_K
         value: "3"
       - key: LLM_MAX_TOKENS
-        value: "1024" 
+        value: "512"  # Reduced token limit
       - key: CHUNK_SIZE
         value: "500"
       - key: CHUNK_OVERLAP
@@ -929,8 +924,7 @@ const ChatInterface = () => {
           { question: 'test' },
           {
             headers: { 
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
+              'Content-Type': 'application/json'
             },
             withCredentials: false,
             timeout: 60000
@@ -967,11 +961,10 @@ const ChatInterface = () => {
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
+            'Content-Type': 'application/json'
           },
-          withCredentials: false,  // Important for CORS
-          timeout: 60000  // Increased timeout to 60 seconds
+          withCredentials: false,
+          timeout: 300000  // 5 minute timeout
         }
       );
       
@@ -1099,6 +1092,7 @@ export default ChatInterface;
 ```python
 import logging
 import sys
+import os
 from app.main import create_app
 
 # Configure logging
@@ -1123,7 +1117,7 @@ if __name__ == '__main__':
         logger.info("=== Initialization complete ===")
         
         # Use same port as gunicorn config
-        port = int(os.environ.get('PORT', 10000))
+        port = int(os.environ.get('PORT', 5001))
         logger.info(f"Starting Flask server on http://0.0.0.0:{port}")
         
         # Start the Flask server
@@ -1187,12 +1181,16 @@ def create_app(force_recreate=False):
         
         # Configure CORS with settings from config
         CORS(app, 
-            origins=[ALLOWED_ORIGIN],
-            methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-            supports_credentials=True,
-            expose_headers=["Content-Type"],
-            max_age=3600
+            resources={
+                r"/api/*": {
+                    "origins": [ALLOWED_ORIGIN],
+                    "methods": ["GET", "POST", "OPTIONS"],
+                    "allow_headers": ["Content-Type"],
+                    "supports_credentials": False,
+                    "expose_headers": ["Content-Type"],
+                    "max_age": 3600
+                }
+            }
         )
 
         # Configure gunicorn settings via app config
@@ -1201,12 +1199,13 @@ def create_app(force_recreate=False):
             'worker_class': 'gthread',
             'workers': 1,
             'threads': 4,
-            'timeout': 120,
+            'timeout': 300,
             'max_requests': 100,
             'max_requests_jitter': 20
         })
         
         # Add CORS headers to all responses
+        """
         @app.after_request
         def after_request(response):
             response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
@@ -1214,6 +1213,7 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Credentials', 'true')
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
+        """
         
         # Initialize components before registering blueprints
         with app.app_context():
@@ -1819,6 +1819,9 @@ class QAChainManager:
                     "chat_history": []
                 }
 
+            # Add timeout handling
+            timeout = 300  # 5 minutes timeout
+
             # Clean query
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
@@ -1826,13 +1829,24 @@ class QAChainManager:
             # Select chain based on query type and get response
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
-            response = selected_chain.invoke({"question": query})
-            
+
+            # Execute with timeout
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(selected_chain.invoke, {"question": query})
+                try:
+                    response = future.result(timeout=timeout)
+                except TimeoutError:
+                    return {
+                        "answer": "Request timed out. Please try again with a simpler question.",
+                        "sources": [],
+                        "chat_history": self.get_chat_history()
+                    }
+
             # Store in memory if string response
             if isinstance(response, str):
                 self.memory.chat_memory.add_user_message(query)
                 self.memory.chat_memory.add_ai_message(response)
-            
+
             return {
                 "answer": response,
                 "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
@@ -3247,15 +3261,23 @@ def ask_question():
             "status": "error"
         }), 500
 
-@api_bp.route('/ask', methods=['OPTIONS'])
+"""@api_bp.route('/ask', methods=['OPTIONS'])
 def handle_ask_options():
-    """Handle CORS preflight for ask endpoint"""
+    "Handle CORS preflight for ask endpoint"
     response = jsonify({'message': 'OK'})
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
     response.headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
+"""
+@api_bp.route('/', methods=['GET', 'HEAD'])
+def root():
+    """Handle root path requests"""
+    return jsonify({
+        "status": "online",
+        "message": "RAG Game Assistant API is running. Use /api/ endpoints to interact."
+    })
 ```
 
 # File: backend/tests/__Init__.py
@@ -5273,8 +5295,7 @@ const ChatInterface = () => {
           { question: 'test' },
           {
             headers: { 
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
+              'Content-Type': 'application/json'
             },
             withCredentials: false,
             timeout: 60000
@@ -5311,11 +5332,10 @@ const ChatInterface = () => {
         { question: input },
         {
           headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
+            'Content-Type': 'application/json'
           },
-          withCredentials: false,  // Important for CORS
-          timeout: 60000  // Increased timeout to 60 seconds
+          withCredentials: false,
+          timeout: 300000  // 5 minute timeout
         }
       );
       
@@ -5445,6 +5465,7 @@ export default ChatInterface;
 ```python
 import logging
 import sys
+import os
 from app.main import create_app
 
 # Configure logging
@@ -5469,7 +5490,7 @@ if __name__ == '__main__':
         logger.info("=== Initialization complete ===")
         
         # Use same port as gunicorn config
-        port = int(os.environ.get('PORT', 10000))
+        port = int(os.environ.get('PORT', 5001))
         logger.info(f"Starting Flask server on http://0.0.0.0:{port}")
         
         # Start the Flask server
@@ -5533,12 +5554,16 @@ def create_app(force_recreate=False):
         
         # Configure CORS with settings from config
         CORS(app, 
-            origins=[ALLOWED_ORIGIN],
-            methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-            supports_credentials=True,
-            expose_headers=["Content-Type"],
-            max_age=3600
+            resources={
+                r"/api/*": {
+                    "origins": [ALLOWED_ORIGIN],
+                    "methods": ["GET", "POST", "OPTIONS"],
+                    "allow_headers": ["Content-Type"],
+                    "supports_credentials": False,
+                    "expose_headers": ["Content-Type"],
+                    "max_age": 3600
+                }
+            }
         )
 
         # Configure gunicorn settings via app config
@@ -5547,12 +5572,13 @@ def create_app(force_recreate=False):
             'worker_class': 'gthread',
             'workers': 1,
             'threads': 4,
-            'timeout': 120,
+            'timeout': 300,
             'max_requests': 100,
             'max_requests_jitter': 20
         })
         
         # Add CORS headers to all responses
+        """
         @app.after_request
         def after_request(response):
             response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
@@ -5560,6 +5586,7 @@ def create_app(force_recreate=False):
             response.headers.add('Access-Control-Allow-Credentials', 'true')
             response.headers.add('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
             return response
+        """
         
         # Initialize components before registering blueprints
         with app.app_context():
@@ -6165,6 +6192,9 @@ class QAChainManager:
                     "chat_history": []
                 }
 
+            # Add timeout handling
+            timeout = 300  # 5 minutes timeout
+
             # Clean query
             query = " ".join(query.strip().split())
             self.last_sources = []  # Reset sources
@@ -6172,13 +6202,24 @@ class QAChainManager:
             # Select chain based on query type and get response
             query_type = self.determine_query_type(query)
             selected_chain = getattr(self, f"{query_type}_chain", chain)
-            response = selected_chain.invoke({"question": query})
-            
+
+            # Execute with timeout
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(selected_chain.invoke, {"question": query})
+                try:
+                    response = future.result(timeout=timeout)
+                except TimeoutError:
+                    return {
+                        "answer": "Request timed out. Please try again with a simpler question.",
+                        "sources": [],
+                        "chat_history": self.get_chat_history()
+                    }
+
             # Store in memory if string response
             if isinstance(response, str):
                 self.memory.chat_memory.add_user_message(query)
                 self.memory.chat_memory.add_ai_message(response)
-            
+
             return {
                 "answer": response,
                 "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
@@ -7593,15 +7634,23 @@ def ask_question():
             "status": "error"
         }), 500
 
-@api_bp.route('/ask', methods=['OPTIONS'])
+"""@api_bp.route('/ask', methods=['OPTIONS'])
 def handle_ask_options():
-    """Handle CORS preflight for ask endpoint"""
+    "Handle CORS preflight for ask endpoint"
     response = jsonify({'message': 'OK'})
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
     response.headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
+"""
+@api_bp.route('/', methods=['GET', 'HEAD'])
+def root():
+    """Handle root path requests"""
+    return jsonify({
+        "status": "online",
+        "message": "RAG Game Assistant API is running. Use /api/ endpoints to interact."
+    })
 ```
 
 # File: backend/tests/__Init__.py
