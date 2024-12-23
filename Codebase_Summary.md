@@ -104,6 +104,7 @@
     │   ├── venv
     │   ├── .DS_Store
     │   ├── .env
+    │   ├── gunicorn_config.py
     │   ├── requirements.txt
     │   ├── run.py
     │   ├── runtime.txt
@@ -143,14 +144,13 @@
     ├── .gitignore
     ├── deployment_test.py
     ├── generate_code_summary.py
-    ├── gunicorn_config.py
     └── render.yaml
 ```
 
 ## File Statistics
 - .css: 3 files
 - .js: 12 files
-- .py: 67 files
+- .py: 68 files
 - .yaml: 1 files
 
 ## Root Directory Files
@@ -723,57 +723,15 @@ if __name__ == "__main__":
     )
 ```
 
-# File: gunicorn_config.py
-```python
-# File: backend/gunicorn_config.py
-import os
-import multiprocessing
-
-# Basic config
-port = int(os.environ.get('PORT', '10000'))
-bind = f"0.0.0.0:{port}"
-
-# Worker Settings
-workers = 1  # Single worker to prevent memory issues
-worker_class = 'sync'  # Changed from gthread to sync
-threads = 1  # Reduced threads to prevent concurrency issues
-
-# Timeouts
-timeout = 600  # 10 minutes
-graceful_timeout = 300  # 5 minutes
-keepalive = 2
-
-# Request Settings
-max_requests = 0  # Disable max requests
-max_requests_jitter = 0
-
-# Server Mechanics
-preload_app = False
-daemon = False
-reload = False
-
-# Logging
-accesslog = '-'
-errorlog = '-'
-loglevel = 'debug'
-capture_output = True
-enable_stdio_inheritance = True
-
-def on_starting(server):
-    server.log.info("Starting Gunicorn Server")
-
-def on_exit(server):
-    server.log.info("Shutting down Gunicorn Server")
-```
-
 # File: render.yaml
 ```yaml
+# File: render.yaml
 services:
   - type: web
     name: rag-game-assistant-backend
     env: python
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: cd backend && gunicorn --config gunicorn_config.py "app.main:create_app()"
+    startCommand: cd backend && gunicorn --config gunicorn_config.py --timeout 120 --workers 1 --threads 1 "app.main:create_app()"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12
@@ -796,14 +754,50 @@ services:
       - key: VECTOR_STORE_TOP_K
         value: "3"
       - key: LLM_MAX_TOKENS
-        value: "512"  # Reduced token limit
+        value: "512"
       - key: CHUNK_SIZE
         value: "500"
       - key: CHUNK_OVERLAP
         value: "50"
       - key: WEB_CONCURRENCY
         value: "1"
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: WORKER_CLASS
+        value: "sync"
+      - key: MAX_REQUESTS
+        value: "0"
+      - key: "RETRIEVAL_MODE"
+        value: "mmr"
+      - key: "MMR_DIVERSITY_SCORE"
+        value: "0.3"
+      - key: "MAX_RETRIES"
+        value: "3"
+      - key: "RETRY_DELAY"
+        value: "1.0"
+      - key: "MIN_CHUNK_SIZE"
+        value: "100"
+      - key: "MAX_CHUNK_SIZE"
+        value: "8000"
+      - key: "CODE_CHUNK_SIZE"
+        value: "11800"
+      - key: "CODE_CHUNK_OVERLAP"
+        value: "400"
+      - key: "MIN_CODE_CHUNK_SIZE"
+        value: "50"
+      - key: "MAX_CODE_CHUNK_SIZE"
+        value: "11800"
+      - key: "COHERE_MODEL"
+        value: "embed-multilingual-v2.0"
     healthCheckPath: /api/
+    startupProbe:
+      httpGet:
+        path: /api/
+        port: 10000
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
     autoDeploy: true
 
   - type: web
@@ -1086,6 +1080,56 @@ const ChatInterface = () => {
 };
 
 export default ChatInterface;
+```
+
+# File: backend/gunicorn_config.py
+```python
+# File: backend/gunicorn_config.py
+import os
+import multiprocessing
+
+# Basic config
+port = int(os.environ.get('PORT', '10000'))
+bind = f"0.0.0.0:{port}"
+
+# Worker Settings
+workers = 1  # Single worker for more predictable behavior
+worker_class = 'sync'  # Using sync worker for stability
+threads = 1  # Single thread to avoid concurrency issues
+
+# Increased Timeouts
+timeout = 120  # 2 minutes timeout (increased from 60)
+graceful_timeout = 60  # 1 minute graceful timeout
+keepalive = 5  # Increased keepalive
+
+# Request Settings
+max_requests = 0  # Disable max requests
+max_requests_jitter = 0
+
+# Server Mechanics
+preload_app = True  # Enable preloading
+daemon = False
+reload = False
+
+# Logging
+accesslog = '-'
+errorlog = '-'
+loglevel = 'info'
+capture_output = True
+enable_stdio_inheritance = True
+
+# Startup and Shutdown Hooks
+def on_starting(server):
+    server.log.info("Starting Gunicorn Server")
+
+def on_exit(server):
+    server.log.info("Shutting down Gunicorn Server")
+
+def post_fork(server, worker):
+    server.log.info(f"Worker spawned (pid: {worker.pid})")
+
+def worker_exit(server, worker):
+    server.log.info(f"Worker exited (pid: {worker.pid})")
 ```
 
 # File: backend/run.py
@@ -1642,9 +1686,9 @@ def initialize_app(force_recreate=False):
         def timeout_handler(signum, frame):
             raise TimeoutError("Initialization timed out")
         
-        # Set 60 second timeout for initialization
+        # Set 90 second timeout for initialization (increased from 60)
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(60)
+        signal.alarm(90)
         
         try:
             # Setup paths
@@ -1657,8 +1701,8 @@ def initialize_app(force_recreate=False):
             # Initialize components with reduced batch sizes and caching
             AppComponents.doc_processor = DocumentProcessor(
                 knowledge_base_path=str(knowledge_base_path),
-                max_retries=2,  # Reduced from 3
-                retry_delay=0.5,  # Reduced from 1.0
+                max_retries=2,
+                retry_delay=0.5,
                 min_chunk_size=MIN_CHUNK_SIZE,
                 max_chunk_size=MAX_CHUNK_SIZE
             )
@@ -5461,6 +5505,56 @@ export default ChatInterface;
 
 ## Backend Code Contents
 
+# File: backend/gunicorn_config.py
+```python
+# File: backend/gunicorn_config.py
+import os
+import multiprocessing
+
+# Basic config
+port = int(os.environ.get('PORT', '10000'))
+bind = f"0.0.0.0:{port}"
+
+# Worker Settings
+workers = 1  # Single worker for more predictable behavior
+worker_class = 'sync'  # Using sync worker for stability
+threads = 1  # Single thread to avoid concurrency issues
+
+# Increased Timeouts
+timeout = 120  # 2 minutes timeout (increased from 60)
+graceful_timeout = 60  # 1 minute graceful timeout
+keepalive = 5  # Increased keepalive
+
+# Request Settings
+max_requests = 0  # Disable max requests
+max_requests_jitter = 0
+
+# Server Mechanics
+preload_app = True  # Enable preloading
+daemon = False
+reload = False
+
+# Logging
+accesslog = '-'
+errorlog = '-'
+loglevel = 'info'
+capture_output = True
+enable_stdio_inheritance = True
+
+# Startup and Shutdown Hooks
+def on_starting(server):
+    server.log.info("Starting Gunicorn Server")
+
+def on_exit(server):
+    server.log.info("Shutting down Gunicorn Server")
+
+def post_fork(server, worker):
+    server.log.info(f"Worker spawned (pid: {worker.pid})")
+
+def worker_exit(server, worker):
+    server.log.info(f"Worker exited (pid: {worker.pid})")
+```
+
 # File: backend/run.py
 ```python
 import logging
@@ -6015,9 +6109,9 @@ def initialize_app(force_recreate=False):
         def timeout_handler(signum, frame):
             raise TimeoutError("Initialization timed out")
         
-        # Set 60 second timeout for initialization
+        # Set 90 second timeout for initialization (increased from 60)
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(60)
+        signal.alarm(90)
         
         try:
             # Setup paths
@@ -6030,8 +6124,8 @@ def initialize_app(force_recreate=False):
             # Initialize components with reduced batch sizes and caching
             AppComponents.doc_processor = DocumentProcessor(
                 knowledge_base_path=str(knowledge_base_path),
-                max_retries=2,  # Reduced from 3
-                retry_delay=0.5,  # Reduced from 1.0
+                max_retries=2,
+                retry_delay=0.5,
                 min_chunk_size=MIN_CHUNK_SIZE,
                 max_chunk_size=MAX_CHUNK_SIZE
             )

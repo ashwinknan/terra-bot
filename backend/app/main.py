@@ -30,7 +30,9 @@ def create_app(force_recreate=False):
                     "expose_headers": ["Content-Type"],
                     "max_age": 3600
                 }
-            }
+            },
+            allow_headers=["Content-Type"],
+            methods=["GET", "POST", "OPTIONS"]
         )
 
         # Configure gunicorn settings via app config

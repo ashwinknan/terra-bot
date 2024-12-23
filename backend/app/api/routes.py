@@ -53,6 +53,8 @@ def health_check():
 @api_bp.route('/ask', methods=['POST'])
 def ask_question():
     """Handle question answering"""
+    logger.info(f"Received request: {request.method} {request.path}")
+    logger.info(f"Request headers: {request.headers}")
     try:
         # Check if request has JSON content type
         if not request.is_json:
