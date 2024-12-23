@@ -7,14 +7,16 @@ port = int(os.environ.get('PORT', '10000'))
 bind = f"0.0.0.0:{port}"
 
 # Worker Settings
-workers = 1  # Single worker for more predictable behavior
-worker_class = 'sync'  # Using sync worker for stability
-threads = 1  # Single thread to avoid concurrency issues
+workers = 1
+worker_class = 'sync'
+threads = 4  # Increased from 1
+max_requests = 0
+max_requests_jitter = 0
 
-# Increased Timeouts
-timeout = 120  # 2 minutes timeout (increased from 60)
-graceful_timeout = 60  # 1 minute graceful timeout
-keepalive = 5  # Increased keepalive
+# Increase timeouts
+timeout = 300  # 5 minutes
+graceful_timeout = 120
+keepalive = 5
 
 # Request Settings
 max_requests = 0  # Disable max requests
@@ -28,7 +30,7 @@ reload = False
 # Logging
 accesslog = '-'
 errorlog = '-'
-loglevel = 'info'
+loglevel = 'debug'
 capture_output = True
 enable_stdio_inheritance = True
 

@@ -4,7 +4,7 @@ services:
     name: rag-game-assistant-backend
     env: python
     buildCommand: cd backend && pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: cd backend && gunicorn --config gunicorn_config.py --timeout 300 --workers 1 --threads 4 "app.main:create_app()"
+    startCommand: cd backend && gunicorn --timeout 60 --workers 1 --threads 4 --max-requests 100 "app.main:create_app()"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.12

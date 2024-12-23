@@ -29,14 +29,16 @@ class QAChainManager:
             model=CLAUDE_MODEL,
             anthropic_api_key=ANTHROPIC_API_KEY,
             temperature=LLM_TEMPERATURE,
-            max_tokens=LLM_MAX_TOKENS
+            max_tokens=LLM_MAX_TOKENS,
+            timeout=60  # Add timeout
         )
         
         # Initialize memory
         self.memory = ConversationBufferMemory(
             return_messages=True,
             memory_key="history",
-            output_key="answer"
+            output_key="answer",
+            max_token_limit=1000  # Add token limit
         )
         
         self.output_parser = StrOutputParser()
