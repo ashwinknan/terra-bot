@@ -111,7 +111,7 @@ class QAChainManager:
                 }
 
             # Add timeout handling
-            timeout = 300  # 5 minutes timeout
+            timeout = 120  # 5 minutes timeout
 
             # Clean query
             query = " ".join(query.strip().split())
@@ -126,30 +126,31 @@ class QAChainManager:
                 future = executor.submit(selected_chain.invoke, {"question": query})
                 try:
                     response = future.result(timeout=timeout)
-                except TimeoutError:
+                    
+                    # Store in memory
+                    if isinstance(response, str):
+                        self.memory.chat_memory.add_user_message(query)
+                        self.memory.chat_memory.add_ai_message(response)
+
                     return {
-                        "answer": "Request timed out. Please try again with a simpler question.",
-                        "sources": [],
+                        "answer": response,
+                        "sources": [doc.metadata.get('source', 'Unknown') 
+                                for doc in self.last_sources[:3]],  # Limit sources
                         "chat_history": self.get_chat_history()
                     }
-
-            # Store in memory if string response
-            if isinstance(response, str):
-                self.memory.chat_memory.add_user_message(query)
-                self.memory.chat_memory.add_ai_message(response)
-
-            return {
-                "answer": response,
-                "sources": [doc.metadata.get('source', 'Unknown') for doc in self.last_sources],
-                "chat_history": self.get_chat_history()
-            }
+                except TimeoutError:
+                    return {
+                        "answer": "Request timed out. Please try a simpler question.",
+                        "sources": [],
+                        "chat_history": []
+                    }
 
         except Exception as e:
             logger.error(f"Error in process_query: {str(e)}", exc_info=True)
             return {
                 "answer": f"Error processing query: {str(e)}",
                 "sources": [],
-                "chat_history": self.get_chat_history()
+                "chat_history": []
             }
 
     def _process_query_internal(self, chain: Any, query: str) -> Dict[str, Any]:

@@ -32,8 +32,8 @@ class VectorStoreManager:
     _temp_dirs = set()
     COLLECTION_NAME = "game_development_docs"
     BATCH_DELAY = 2
-    BATCH_SIZE = 10  # Reduced from 50
-    EMBEDDING_DELAY = 1  # Reduced from 2
+    BATCH_SIZE = 5  # Reduced from 50
+    EMBEDDING_DELAY = 0.5  # Reduced from 2
 
     @classmethod
     def reset_instances(cls):
